@@ -1,0 +1,65 @@
+"""StackSpotAgentInvoker — implementa AgentInvokerPort via httpx.
+
+Endpoint: POST {inference_base_url}/v1/agent/{agentId}/chat
+Ver docs/stackspot/02-agents-api.md.
+"""
+
+from __future__ import annotations
+
+import httpx
+
+from gambi.adapters.stackspot.schemas_stackspot import StackSpotChatResponse
+from gambi.application.ports import TokenProviderPort
+from gambi.domain.models import AgentReply, UpstreamError
+
+_DEFAULT_INFERENCE_URL = "https://genai-inference-app.stackspot.com"
+
+
+class StackSpotAgentInvoker:
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        token_provider: TokenProviderPort,
+        inference_base_url: str = _DEFAULT_INFERENCE_URL,
+        stackspot_knowledge: bool = True,
+    ) -> None:
+        self._client = client
+        self._token_provider = token_provider
+        self._base = inference_base_url.rstrip("/")
+        self._stackspot_knowledge = stackspot_knowledge
+
+    async def invoke(self, agent_id: str, user_prompt: str) -> AgentReply:
+        token = await self._token_provider.get_token()
+        url = f"{self._base}/v1/agent/{agent_id}/chat"
+        try:
+            response = await self._client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "streaming": False,
+                    "user_prompt": user_prompt,
+                    "stackspot_knowledge": self._stackspot_knowledge,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"falha ao contatar o StackSpot: {exc}") from exc
+
+        if response.status_code == 404:
+            raise UpstreamError(f"agent não encontrado: {agent_id!r}", status_code=404)
+        if response.status_code >= 400:
+            raise UpstreamError(
+                f"StackSpot retornou {response.status_code}", status_code=response.status_code
+            )
+
+        parsed = StackSpotChatResponse.model_validate(response.json())
+        return AgentReply(
+            message=parsed.message,
+            stop_reason=parsed.stop_reason,
+            user_tokens=parsed.tokens.user,
+            enrichment_tokens=parsed.tokens.enrichment,
+            output_tokens=parsed.tokens.output,
+        )

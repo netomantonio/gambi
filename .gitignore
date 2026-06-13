@@ -1,0 +1,25 @@
+# --- BMAD / tooling (revisar: isto também exclui docs/stackspot e os artefatos de planejamento do git — ver nota do GAMBI) ---
+_bmad/
+_bmad-output/
+.agents/
+.claude/
+
+# --- Python / uv ---
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
+dist/
+build/
+*.egg-info/
+
+# --- Testes / cobertura ---
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# --- Ambiente / segredos ---
+.env
+.env.*
+!.env.example
