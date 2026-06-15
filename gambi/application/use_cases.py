@@ -14,6 +14,7 @@ from gambi.domain.models import (
     ChatStreamChunk,
     Conversation,
     ModelNotFoundError,
+    StackSpotAgentOptions,
 )
 
 logger = logging.getLogger("gambi.use_cases")
@@ -43,12 +44,12 @@ class CreateChatCompletion:
         self._mapper = mapper or ResponseMapper()
 
     async def execute(self, model_id: str, conversation: Conversation) -> ChatResult:
-        agent_id = self._catalog.resolve(model_id)
-        if agent_id is None:
+        entry = self._catalog.resolve(model_id)
+        if entry is None:
             raise ModelNotFoundError(model_id)
 
         user_prompt = self._flattener.flatten(conversation)
-        reply = await self._invoker.invoke(agent_id, user_prompt)
+        reply = await self._invoker.invoke(entry.agent_id, user_prompt, entry.options)
         return self._mapper.to_chat_result(reply, model_id)
 
 
@@ -72,16 +73,16 @@ class CreateChatCompletionStream:
     ) -> AsyncIterator[ChatStreamChunk]:
         # Validação ansiosa: resolve/achata ANTES de iniciar o stream, para que um
         # erro (ex.: modelo inexistente) vire HTTP 404 e não um stream meio-aberto.
-        agent_id = self._catalog.resolve(model_id)
-        if agent_id is None:
+        entry = self._catalog.resolve(model_id)
+        if entry is None:
             raise ModelNotFoundError(model_id)
         user_prompt = self._flattener.flatten(conversation)
-        return self._generate(agent_id, model_id, user_prompt)
+        return self._generate(entry.agent_id, model_id, user_prompt, entry.options)
 
     async def _generate(
-        self, agent_id: str, model_id: str, user_prompt: str
+        self, agent_id: str, model_id: str, user_prompt: str, options: StackSpotAgentOptions
     ) -> AsyncIterator[ChatStreamChunk]:
-        async for event in self._streamer.stream(agent_id, user_prompt):
+        async for event in self._streamer.stream(agent_id, user_prompt, options):
             if event.delta:
                 yield ChatStreamChunk(model_id=model_id, delta=event.delta)
             if event.final:

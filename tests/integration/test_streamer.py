@@ -7,8 +7,11 @@ import httpx
 import respx
 
 from gambi.adapters.stackspot.stream import StackSpotAgentStreamer
+from gambi.domain.models import StackSpotAgentOptions
 
 CHAT_URL = "https://genai-inference-app.stackspot.com/v1/agent/agent-1/chat"
+
+DEFAULT_OPTS = StackSpotAgentOptions()
 
 
 class FixedToken:
@@ -23,7 +26,7 @@ async def _collect(body: bytes, content_type: str = "text/event-stream"):
     async with httpx.AsyncClient() as client:
         streamer = StackSpotAgentStreamer(client=client, token_provider=FixedToken())
         deltas, finals = [], []
-        async for ev in streamer.stream("agent-1", "x"):
+        async for ev in streamer.stream("agent-1", "x", DEFAULT_OPTS):
             if ev.delta:
                 deltas.append(ev.delta)
             if ev.final:

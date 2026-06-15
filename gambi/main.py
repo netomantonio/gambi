@@ -37,16 +37,8 @@ def build_app(settings: Settings | None = None):
         client_id=settings.client_id,
         client_secret=settings.client_secret,
     )
-    invoker = StackSpotAgentInvoker(
-        client=http_client,
-        token_provider=token_provider,
-        stackspot_knowledge=settings.stackspot_knowledge,
-    )
-    streamer = StackSpotAgentStreamer(
-        client=http_client,
-        token_provider=token_provider,
-        stackspot_knowledge=settings.stackspot_knowledge,
-    )
+    invoker = StackSpotAgentInvoker(client=http_client, token_provider=token_provider)
+    streamer = StackSpotAgentStreamer(client=http_client, token_provider=token_provider)
     catalog = ConfigAgentCatalog(settings.agents)
 
     @asynccontextmanager

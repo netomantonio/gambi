@@ -70,11 +70,26 @@ class ChatResult:
 
 
 @dataclass(frozen=True)
+class StackSpotAgentOptions:
+    """Opções de request do StackSpot por agent (campos confirmados na API real).
+
+    Todos têm default seguro; cada agent pode sobrescrever via configuração.
+    """
+
+    stackspot_knowledge: bool = True
+    deep_search_ks: bool = False
+    return_ks_in_response: bool = False
+    knowledge_source_ids: tuple[str, ...] = ()
+    agent_version_number: int | None = None
+
+
+@dataclass(frozen=True)
 class CatalogEntry:
-    """Um agent StackSpot exposto como 'modelo' OpenAI."""
+    """Um agent StackSpot exposto como 'modelo' OpenAI, com suas opções de request."""
 
     model_id: str
     agent_id: str
+    options: StackSpotAgentOptions = field(default_factory=StackSpotAgentOptions)
 
 
 @dataclass(frozen=True)

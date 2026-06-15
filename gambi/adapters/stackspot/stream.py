@@ -17,9 +17,10 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from gambi.adapters.stackspot.request_payload import build_payload
 from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
-from gambi.domain.models import AgentStreamEvent, UpstreamError, Usage
+from gambi.domain.models import AgentStreamEvent, StackSpotAgentOptions, UpstreamError, Usage
 
 logger = logging.getLogger("gambi.stackspot.stream")
 
@@ -36,21 +37,17 @@ class StackSpotAgentStreamer:
         client: httpx.AsyncClient,
         token_provider: TokenProviderPort,
         inference_base_url: str = _DEFAULT_INFERENCE_URL,
-        stackspot_knowledge: bool = True,
     ) -> None:
         self._client = client
         self._token_provider = token_provider
         self._base = inference_base_url.rstrip("/")
-        self._stackspot_knowledge = stackspot_knowledge
 
-    async def stream(self, agent_id: str, user_prompt: str) -> AsyncIterator[AgentStreamEvent]:
+    async def stream(
+        self, agent_id: str, user_prompt: str, options: StackSpotAgentOptions
+    ) -> AsyncIterator[AgentStreamEvent]:
         token = await self._token_provider.get_token()
         url = f"{self._base}/v1/agent/{agent_id}/chat"
-        payload = {
-            "streaming": True,
-            "user_prompt": user_prompt,
-            "stackspot_knowledge": self._stackspot_knowledge,
-        }
+        payload = build_payload(user_prompt=user_prompt, streaming=True, options=options)
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",

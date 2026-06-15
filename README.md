@@ -25,6 +25,21 @@ uv run uvicorn gambi.main:app --reload   # sobe em http://localhost:8000
 
 O `model_id` à esquerda de cada `=` em `GAMBI_AGENTS` (ex.: `stackspot-dev`) é o nome que você vai escolher no VS Code; o `<agentId>` à direita é o id do agent (copiado da URL do agent no portal StackSpot).
 
+### Config por-agent (opções do StackSpot)
+O `GAMBI_AGENTS` é o atalho simples (só `modelo=agentId`). Para definir **opções por agent** — campos confirmados na API real — use um **arquivo JSON** apontado por `GAMBI_AGENTS_FILE` (tem prioridade sobre `GAMBI_AGENTS`). Veja [gambi.agents.example.json](gambi.agents.example.json):
+```json
+[
+  { "model_id": "stackspot-dev", "agent_id": "01ABC...",
+    "stackspot_knowledge": false, "deep_search_ks": false,
+    "return_ks_in_response": false, "knowledge_source_ids": [],
+    "agent_version_number": 1 }
+]
+```
+```bash
+export GAMBI_AGENTS_FILE=./gambi.agents.json
+```
+Só `model_id` e `agent_id` são obrigatórios; o resto herda defaults seguros (`stackspot_knowledge` cai no `GAMBI_STACKSPOT_KNOWLEDGE`). Esses campos são enviados no request ao StackSpot (os mesmos do curl que você captura no portal).
+
 ## Integrar ao VS Code Copilot Chat
 
 Guia completo em **[docs/vscode-setup.md](docs/vscode-setup.md)**. Resumo:

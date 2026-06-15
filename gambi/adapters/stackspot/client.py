@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import httpx
 
+from gambi.adapters.stackspot.request_payload import build_payload
 from gambi.adapters.stackspot.schemas_stackspot import StackSpotChatResponse
 from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
-from gambi.domain.models import AgentReply, UpstreamError
+from gambi.domain.models import AgentReply, StackSpotAgentOptions, UpstreamError
 
 _DEFAULT_INFERENCE_URL = "https://genai-inference-app.stackspot.com"
 
@@ -23,14 +24,14 @@ class StackSpotAgentInvoker:
         client: httpx.AsyncClient,
         token_provider: TokenProviderPort,
         inference_base_url: str = _DEFAULT_INFERENCE_URL,
-        stackspot_knowledge: bool = True,
     ) -> None:
         self._client = client
         self._token_provider = token_provider
         self._base = inference_base_url.rstrip("/")
-        self._stackspot_knowledge = stackspot_knowledge
 
-    async def invoke(self, agent_id: str, user_prompt: str) -> AgentReply:
+    async def invoke(
+        self, agent_id: str, user_prompt: str, options: StackSpotAgentOptions
+    ) -> AgentReply:
         token = await self._token_provider.get_token()
         url = f"{self._base}/v1/agent/{agent_id}/chat"
         try:
@@ -40,11 +41,7 @@ class StackSpotAgentInvoker:
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "streaming": False,
-                    "user_prompt": user_prompt,
-                    "stackspot_knowledge": self._stackspot_knowledge,
-                },
+                json=build_payload(user_prompt=user_prompt, streaming=False, options=options),
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(f"falha ao contatar o StackSpot: {exc}") from exc

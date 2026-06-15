@@ -21,6 +21,5 @@ class ConfigAgentCatalog:
     def list_models(self) -> list[CatalogEntry]:
         return list(self._by_model.values())
 
-    def resolve(self, model_id: str) -> str | None:
-        entry = self._by_model.get(model_id)
-        return entry.agent_id if entry else None
+    def resolve(self, model_id: str) -> CatalogEntry | None:
+        return self._by_model.get(model_id)

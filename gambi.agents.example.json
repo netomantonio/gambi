@@ -1,0 +1,15 @@
+[
+  {
+    "model_id": "stackspot-dev",
+    "agent_id": "COLE_O_AGENT_ID_AQUI",
+    "stackspot_knowledge": false,
+    "deep_search_ks": false,
+    "return_ks_in_response": false,
+    "knowledge_source_ids": [],
+    "agent_version_number": 1
+  },
+  {
+    "model_id": "stackspot-arch",
+    "agent_id": "OUTRO_AGENT_ID"
+  }
+]

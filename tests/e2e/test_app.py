@@ -17,7 +17,7 @@ class FakeInvoker:
         self.reply = reply
         self.seen: tuple[str, str] | None = None
 
-    async def invoke(self, agent_id: str, user_prompt: str) -> AgentReply:
+    async def invoke(self, agent_id: str, user_prompt: str, options=None) -> AgentReply:
         self.seen = (agent_id, user_prompt)
         return self.reply
 
@@ -26,7 +26,9 @@ class FakeStreamer:
     def __init__(self, events: list[AgentStreamEvent]) -> None:
         self.events = events
 
-    async def stream(self, agent_id: str, user_prompt: str) -> AsyncIterator[AgentStreamEvent]:
+    async def stream(
+        self, agent_id: str, user_prompt: str, options=None
+    ) -> AsyncIterator[AgentStreamEvent]:
         for event in self.events:
             yield event
 
@@ -150,7 +152,7 @@ def test_chat_completion_streaming_emits_openai_sse():
 
 
 class _BoomStreamer:
-    async def stream(self, agent_id, user_prompt):
+    async def stream(self, agent_id, user_prompt, options=None):
         raise UpstreamError("StackSpot retornou 401", status_code=401)
         yield  # pragma: no cover — torna isto um async generator
 
