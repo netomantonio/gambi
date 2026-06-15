@@ -7,9 +7,9 @@ JSON estilo OpenAI, e a extração de metadados finais.
 from gambi.adapters.stackspot.stream import (
     _compute_delta,
     _extract_text,
-    _extract_usage,
     _parse_chunk,
 )
+from gambi.adapters.stackspot.tokens import usage_from_tokens
 
 
 def test_compute_delta_incremental():
@@ -51,7 +51,7 @@ def test_parse_chunk_final_metadata():
     payload = '{"conversation_id": "01K9", "tokens": {"user": 3, "enrichment": 2, "output": 5}}'
     text, stop, usage, conv = _parse_chunk(payload)
     assert conv == "01K9"
-    assert usage.prompt_tokens == 5  # user + enrichment
+    assert usage.prompt_tokens == 5  # input ausente → user + enrichment
     assert usage.completion_tokens == 5
 
 
@@ -60,6 +60,14 @@ def test_extract_text_prefers_known_keys():
     assert _extract_text({"foo": "bar"}) is None
 
 
-def test_extract_usage_none_when_absent():
-    assert _extract_usage(None) is None
-    assert _extract_usage({"output": 7}).completion_tokens == 7
+def test_usage_from_tokens_real_shape_with_nulls():
+    # Shape REAL capturado da API (2026-06-15): user/enrichment null, prompt em `input`.
+    usage = usage_from_tokens({"user": None, "enrichment": None, "input": 6331, "output": 2970})
+    assert usage.prompt_tokens == 6331
+    assert usage.completion_tokens == 2970
+
+
+def test_usage_from_tokens_absent_or_invalid():
+    assert usage_from_tokens(None).prompt_tokens == 0
+    assert usage_from_tokens({"output": 7}).completion_tokens == 7
+    assert usage_from_tokens({"output": 7}).prompt_tokens == 0

@@ -41,6 +41,10 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = None
     frequency_penalty: float | None = None
     presence_penalty: float | None = None
+    # Tool calling (agent mode do VS Code). Aceitos para NÃO dar 422, mas ainda
+    # NÃO suportados: o StackSpot não expõe tool_calls. Ver routes_chat (aviso em log).
+    tools: list[dict] | None = None
+    tool_choice: object | None = None
 
 
 # --- /v1/chat/completions (response) ---

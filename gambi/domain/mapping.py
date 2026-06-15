@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from gambi.domain.models import AgentReply, ChatResult, FinishReason, Usage
+from gambi.domain.models import AgentReply, ChatResult, FinishReason
 
 logger = logging.getLogger("gambi.mapping")
 
@@ -36,14 +36,10 @@ class ResponseMapper:
         self._finish = finish_reason_mapper or FinishReasonMapper()
 
     def to_chat_result(self, reply: AgentReply, model_id: str) -> ChatResult:
-        # prompt_tokens = tokens do usuário + enriquecimento (contexto/KS); output = completion.
-        usage = Usage(
-            prompt_tokens=reply.user_tokens + reply.enrichment_tokens,
-            completion_tokens=reply.output_tokens,
-        )
+        # O uso já vem resolvido na borda (adapters/stackspot/tokens.py).
         return ChatResult(
             model_id=model_id,
             content=reply.message,
             finish_reason=self._finish.map(reply.stop_reason),
-            usage=usage,
+            usage=reply.usage,
         )

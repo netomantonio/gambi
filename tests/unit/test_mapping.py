@@ -1,5 +1,5 @@
 from gambi.domain.mapping import FinishReasonMapper, ResponseMapper
-from gambi.domain.models import AgentReply, FinishReason
+from gambi.domain.models import AgentReply, FinishReason, Usage
 
 
 def test_finish_reason_known():
@@ -15,19 +15,16 @@ def test_finish_reason_unknown_defaults_to_stop():
     assert FinishReasonMapper().map(None) == FinishReason.STOP
 
 
-def test_response_mapper_builds_usage_and_content():
+def test_response_mapper_passes_through_usage_and_content():
     reply = AgentReply(
         message="resposta do agent",
         stop_reason="stop",
-        user_tokens=3,
-        enrichment_tokens=2,
-        output_tokens=5,
+        usage=Usage(prompt_tokens=5, completion_tokens=5),
     )
     result = ResponseMapper().to_chat_result(reply, model_id="m1")
     assert result.content == "resposta do agent"
     assert result.model_id == "m1"
     assert result.finish_reason == FinishReason.STOP
-    # prompt = user + enrichment; total = prompt + output
     assert result.usage.prompt_tokens == 5
     assert result.usage.completion_tokens == 5
     assert result.usage.total_tokens == 10

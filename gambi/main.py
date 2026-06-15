@@ -22,9 +22,11 @@ from gambi.application.use_cases import (
     ListModels,
 )
 from gambi.config import Settings
+from gambi.logging_config import configure_logging
 
 
 def build_app(settings: Settings | None = None):
+    configure_logging()
     settings = settings or Settings.from_env()
 
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))

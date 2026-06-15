@@ -1,22 +1,27 @@
 """StackSpotAgentStreamer — implementa AgentStreamPort via httpx streaming.
 
-⚠️ OQ-1: o formato do SSE do StackSpot NÃO é público (ver docs/stackspot/08-gaps-pesquisa.md).
-Este parser é DEFENSIVO e auto-descobridor — valide contra a API real no ambiente corporativo:
-  - detecta Content-Type: se vier `application/json`, o servidor bufferizou → caminho não-streaming;
-  - por linha `data:`, tenta JSON e procura o texto em chaves candidatas; senão usa texto puro;
-  - auto-detecta deltas incrementais vs cumulativos (heurística startswith);
-  - captura stop_reason/tokens/conversation_id do chunk final quando presentes.
+Formato confirmado por captura (2026-06-15): SSE com frames `data: {<objeto>}`, onde `<objeto>`
+tem o MESMO shape da resposta não-streaming (`{message, stop_reason, tokens, ...}`).
+O consumidor é robusto e NÃO depende do content-type:
+  - se aparecerem frames `data:`, processa em tempo real (streaming);
+  - se nenhum frame `data:` aparecer, trata o corpo inteiro como JSON único (fallback);
+  - auto-detecta `message` incremental vs cumulativo (heurística startswith em `_compute_delta`);
+  - captura stop_reason/tokens/conversation_id do frame que os trouxer (tipicamente o último).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
 
+from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
 from gambi.domain.models import AgentStreamEvent, UpstreamError, Usage
+
+logger = logging.getLogger("gambi.stackspot.stream")
 
 _DEFAULT_INFERENCE_URL = "https://genai-inference-app.stackspot.com"
 
@@ -62,42 +67,41 @@ class StackSpotAgentStreamer:
                         f"StackSpot retornou {resp.status_code}", status_code=resp.status_code
                     )
 
-                content_type = resp.headers.get("content-type", "")
-                if "application/json" in content_type:
-                    # Servidor não fez streaming real → re-emite a resposta única como stream.
-                    async for event in self._fallback_non_streaming(resp):
-                        yield event
-                    return
-
-                async for event in self._parse_event_stream(resp):
+                logger.info(
+                    "StackSpot stream: status=%s content-type=%r",
+                    resp.status_code,
+                    resp.headers.get("content-type", ""),
+                )
+                async for event in self._consume(resp):
                     yield event
         except httpx.HTTPError as exc:
+            # Cobre TLS/proxy corporativo, timeout, DNS — causas comuns no corp env.
+            logger.exception("falha de transporte ao contatar o StackSpot (stream)")
             raise UpstreamError(f"falha ao contatar o StackSpot (stream): {exc}") from exc
 
-    async def _fallback_non_streaming(
-        self, resp: httpx.Response
-    ) -> AsyncIterator[AgentStreamEvent]:
-        body = await resp.aread()
-        data = json.loads(body)
-        text, stop, usage, conv = _parse_chunk_obj(data)
-        if text:
-            yield AgentStreamEvent(delta=text)
-        yield AgentStreamEvent(final=True, stop_reason=stop, usage=usage, conversation_id=conv)
-
-    async def _parse_event_stream(self, resp: httpx.Response) -> AsyncIterator[AgentStreamEvent]:
+    async def _consume(self, resp: httpx.Response) -> AsyncIterator[AgentStreamEvent]:
+        """Processa frames `data:` em tempo real; se não houver frames, cai p/ JSON único."""
         acc = ""
         final_stop: str | None = None
         final_usage: Usage | None = None
         final_conv: str | None = None
+        saw_frame = False
+        emitted = False
+        buffer: list[str] = []  # só p/ o fallback de JSON único (enquanto não há frames)
 
         async for raw_line in resp.aiter_lines():
             line = raw_line.strip()
+            if not saw_frame and len(buffer) < 500:
+                buffer.append(raw_line)
             if not line or line.startswith(":"):  # vazio ou comentário/heartbeat SSE
                 continue
-            payload = line[5:].strip() if line.startswith("data:") else line
+            if not line.startswith("data:"):  # ignora event:/id: durante o stream
+                continue
+
+            saw_frame = True
+            payload = line[5:].strip()
             if payload == "[DONE]":
                 break
-
             text, stop, usage, conv = _parse_chunk(payload)
             if stop is not None:
                 final_stop = stop
@@ -108,11 +112,41 @@ class StackSpotAgentStreamer:
             if text:
                 delta, acc = _compute_delta(text, acc)
                 if delta:
+                    emitted = True
                     yield AgentStreamEvent(delta=delta)
 
+        if not saw_frame:
+            # Não era SSE: o corpo inteiro é um JSON único (ou texto cru).
+            async for event in self._emit_single_body("\n".join(buffer)):
+                yield event
+            return
+
+        if not emitted:
+            logger.warning(
+                "SSE sem conteúdo extraído — formato inesperado. Prévia: %r", buffer[:10]
+            )
         yield AgentStreamEvent(
             final=True, stop_reason=final_stop, usage=final_usage, conversation_id=final_conv
         )
+
+    async def _emit_single_body(self, raw: str) -> AsyncIterator[AgentStreamEvent]:
+        raw = raw.strip()
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            logger.warning("corpo não-JSON do StackSpot; primeiros 300 chars: %r", raw[:300])
+            if raw:
+                yield AgentStreamEvent(delta=raw)
+            yield AgentStreamEvent(final=True)
+            return
+        if not isinstance(data, dict):
+            yield AgentStreamEvent(delta=raw)
+            yield AgentStreamEvent(final=True)
+            return
+        text, stop, usage, conv = _parse_chunk_obj(data)
+        if text:
+            yield AgentStreamEvent(delta=text)
+        yield AgentStreamEvent(final=True, stop_reason=stop, usage=usage, conversation_id=conv)
 
 
 def _compute_delta(text: str, acc: str) -> tuple[str, str]:
@@ -135,7 +169,7 @@ def _parse_chunk(payload: str) -> tuple[str | None, str | None, Usage | None, st
 def _parse_chunk_obj(obj: dict) -> tuple[str | None, str | None, Usage | None, str | None]:
     text = _extract_text(obj)
     stop = obj.get("stop_reason")
-    usage = _extract_usage(obj.get("tokens"))
+    usage = usage_from_tokens(obj.get("tokens")) if obj.get("tokens") is not None else None
     conv = obj.get("conversation_id")
     return text, stop, usage, conv
 
@@ -152,12 +186,3 @@ def _extract_text(obj: dict) -> str | None:
         if isinstance(delta, dict) and isinstance(delta.get("content"), str):
             return delta["content"]
     return None
-
-
-def _extract_usage(tokens: object) -> Usage | None:
-    if not isinstance(tokens, dict):
-        return None
-    return Usage(
-        prompt_tokens=int(tokens.get("user", 0)) + int(tokens.get("enrichment", 0)),
-        completion_tokens=int(tokens.get("output", 0)),
-    )

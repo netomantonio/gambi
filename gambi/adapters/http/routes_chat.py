@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 
@@ -21,6 +22,7 @@ from gambi.application.use_cases import CreateChatCompletion, CreateChatCompleti
 from gambi.domain.models import Conversation, Message, Role
 
 router = APIRouter()
+logger = logging.getLogger("gambi.http.chat")
 
 
 def _content_to_text(content: str | list[dict] | None) -> str:
@@ -50,6 +52,25 @@ def _to_role(role: str) -> Role:
 
 @router.post("/v1/chat/completions")
 async def create_chat_completion(body: ChatCompletionRequest, request: Request):
+    logger.info(
+        "chat: model=%r stream=%s messages=%d tools=%d",
+        body.model,
+        body.stream,
+        len(body.messages),
+        len(body.tools or []),
+    )
+    if body.tools:
+        # Agent mode: o VS Code mandou ferramentas e espera `tool_calls` de volta.
+        # O StackSpot não expõe tool calling → o agent vai responder em TEXTO, e o editor
+        # NÃO conseguirá editar/criar arquivos autonomamente. Limitação conhecida (não-bug).
+        tool_names = [t.get("function", {}).get("name") for t in body.tools if isinstance(t, dict)]
+        logger.warning(
+            "agent mode detectado: %d tools (%s). GAMBI não faz tool-calling "
+            "(StackSpot não expõe); a resposta virá em texto, sem editar arquivos.",
+            len(body.tools),
+            tool_names,
+        )
+
     conversation = _to_conversation(body.messages)
 
     if body.stream:
@@ -59,7 +80,10 @@ async def create_chat_completion(body: ChatCompletionRequest, request: Request):
         chunks = await stream_uc.execute(body.model, conversation)
         return StreamingResponse(
             serialize_openai_sse(
-                chunks, response_id=f"chatcmpl-{uuid.uuid4().hex}", created=int(time.time())
+                chunks,
+                response_id=f"chatcmpl-{uuid.uuid4().hex}",
+                created=int(time.time()),
+                model=body.model,
             ),
             media_type="text/event-stream",
         )

@@ -25,7 +25,10 @@ async def test_invoke_success_maps_reply():
             json={
                 "message": "uma API é...",
                 "stop_reason": "stop",
-                "tokens": {"user": 3, "enrichment": 2, "output": 5},
+                # shape REAL: user/enrichment null, prompt em `input`, campos extras
+                "tokens": {"user": None, "enrichment": None, "input": 42, "output": 5},
+                "message_id": "01KV66",
+                "agent_info": [],
             },
         )
     )
@@ -33,7 +36,8 @@ async def test_invoke_success_maps_reply():
         reply = await _invoker(client).invoke("agent-1", "o que é uma API?")
 
     assert reply.message == "uma API é..."
-    assert reply.output_tokens == 5
+    assert reply.usage.prompt_tokens == 42
+    assert reply.usage.completion_tokens == 5
     # confere que o Bearer foi enviado
     sent = route.calls.last.request
     assert sent.headers["Authorization"] == "Bearer tok"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -50,14 +50,13 @@ class Usage:
 class AgentReply:
     """Resposta de um agent StackSpot, já normalizada para o domínio.
 
-    Os campos de token espelham `tokens.{user,enrichment,output}` da Agents API.
+    O uso de tokens é resolvido na borda (o formato real é `{user,enrichment,input,output}`,
+    com user/enrichment podendo ser null — ver adapters/stackspot/tokens.py).
     """
 
     message: str
     stop_reason: str | None
-    user_tokens: int = 0
-    enrichment_tokens: int = 0
-    output_tokens: int = 0
+    usage: Usage = field(default_factory=lambda: Usage(0, 0))
 
 
 @dataclass(frozen=True)

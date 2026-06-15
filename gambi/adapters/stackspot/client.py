@@ -9,6 +9,7 @@ from __future__ import annotations
 import httpx
 
 from gambi.adapters.stackspot.schemas_stackspot import StackSpotChatResponse
+from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
 from gambi.domain.models import AgentReply, UpstreamError
 
@@ -59,7 +60,5 @@ class StackSpotAgentInvoker:
         return AgentReply(
             message=parsed.message,
             stop_reason=parsed.stop_reason,
-            user_tokens=parsed.tokens.user,
-            enrichment_tokens=parsed.tokens.enrichment,
-            output_tokens=parsed.tokens.output,
+            usage=usage_from_tokens(parsed.tokens),
         )

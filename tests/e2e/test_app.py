@@ -9,7 +9,7 @@ from gambi.application.use_cases import (
     CreateChatCompletionStream,
     ListModels,
 )
-from gambi.domain.models import AgentReply, AgentStreamEvent, CatalogEntry, Usage
+from gambi.domain.models import AgentReply, AgentStreamEvent, CatalogEntry, UpstreamError, Usage
 
 
 class FakeInvoker:
@@ -36,9 +36,7 @@ def build_client(
     stream_events: list[AgentStreamEvent] | None = None,
 ) -> tuple[TestClient, FakeInvoker]:
     catalog = ConfigAgentCatalog([CatalogEntry(model_id="stackspot-dev", agent_id="agent-1")])
-    invoker = FakeInvoker(
-        reply or AgentReply(message="oi", stop_reason="stop", user_tokens=1, output_tokens=2)
-    )
+    invoker = FakeInvoker(reply or AgentReply(message="oi", stop_reason="stop", usage=Usage(1, 2)))
     streamer = FakeStreamer(
         stream_events
         if stream_events is not None
@@ -74,8 +72,7 @@ def test_chat_completion_happy_path():
         AgentReply(
             message="uma API é uma interface",
             stop_reason="stop",
-            user_tokens=4,
-            output_tokens=6,
+            usage=Usage(4, 6),
         )
     )
     resp = client.post(
@@ -95,6 +92,22 @@ def test_chat_completion_happy_path():
     assert body["usage"]["total_tokens"] == 10
     # o invoker recebeu o agentId resolvido e o prompt achatado
     assert invoker.seen[0] == "agent-1"
+
+
+def test_chat_completion_with_tools_is_accepted_not_422():
+    # Agent mode envia `tools`; não podemos rejeitar (422) — aceitamos e respondemos em texto.
+    client, _ = build_client()
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "crie um arquivo"}],
+            "tools": [{"type": "function", "function": {"name": "create_file", "parameters": {}}}],
+            "tool_choice": "auto",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["object"] == "chat.completion"
 
 
 def test_chat_completion_unknown_model_returns_openai_error():
@@ -134,6 +147,35 @@ def test_chat_completion_streaming_emits_openai_sse():
     assert '"object": "chat.completion.chunk"' in text
     assert '"finish_reason": "stop"' in text
     assert text.strip().endswith("data: [DONE]")
+
+
+class _BoomStreamer:
+    async def stream(self, agent_id, user_prompt):
+        raise UpstreamError("StackSpot retornou 401", status_code=401)
+        yield  # pragma: no cover — torna isto um async generator
+
+
+def test_streaming_upstream_error_is_surfaced_not_silent():
+    # Erro após o 200 não pode falhar em silêncio: vira conteúdo visível + [DONE].
+    catalog = ConfigAgentCatalog([CatalogEntry(model_id="stackspot-dev", agent_id="agent-1")])
+    app = create_app(
+        list_models=ListModels(catalog),
+        create_chat_completion=CreateChatCompletion(catalog, FakeInvoker(AgentReply("x", "stop"))),
+        create_chat_completion_stream=CreateChatCompletionStream(catalog, _BoomStreamer()),
+    )
+    client = TestClient(app)
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "oi"}],
+            "stream": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert "[GAMBI erro:" in resp.text
+    assert "401" in resp.text
+    assert resp.text.strip().endswith("data: [DONE]")
 
 
 def test_streaming_unknown_model_returns_error_before_stream():

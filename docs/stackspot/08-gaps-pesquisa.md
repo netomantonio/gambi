@@ -26,7 +26,28 @@ Fonte forte: código-fonte de `microsoft/vscode-copilot-chat` (`customOAIProvide
 
 ---
 
-## OQ-1 — Formato do SSE da Agents API StackSpot · ⚠️ DESCONHECIDO (impl. defensiva)
+## OQ-1 — Formato do SSE da Agents API StackSpot · ✅ RESOLVIDO POR CAPTURA REAL (2026-06-15)
+
+**Achado (corp env):** com `"streaming": true` o agent FAZ streaming SSE — cada frame é
+`data: {<objeto>}`, onde `<objeto>` tem o **mesmo shape** da resposta não-streaming
+(`{message, stop_reason, tokens, conversation_id, message_id, ...}`). Com `streaming:false`,
+vem um JSON único com esse mesmo objeto.
+
+Implementação no GAMBI (`adapters/stackspot/stream.py` → `_consume`), robusta e sem depender do content-type:
+1. Se aparecerem frames `data:` → processa em **tempo real**; `_compute_delta` (startswith)
+   auto-detecta `message` **incremental vs cumulativo** e emite só o pedaço novo. Encerra em `[DONE]`
+   ou no fim do stream, propagando `stop_reason`/`tokens`/`conversation_id` do frame que os trouxer.
+2. Se NÃO houver frames `data:` → trata o corpo como **JSON único** (`_emit_single_body`).
+3. **Formato real de `tokens`:** `{"user": null, "enrichment": null, "input": <n>, "output": <n>}` —
+   prompt vem em **`input`** (user/enrichment podem ser null). Resolvido em `tokens.py` (`usage_from_tokens`):
+   `prompt = input or (user+enrichment)`, `completion = output`, null→0.
+   **Era o bug que travava tudo:** o código antigo fazia `int(tokens["user"])` → crash em `None`,
+   morrendo em silêncio no streaming.
+
+`stop_reason` observado: `"stop"` (confirma OQ-6 baseline). `conversation_id`: `null` sem `use_conversation`.
+
+> Nota: uma captura inicial foi feita com streaming desligado (JSON único), o que levou a uma
+> conclusão errada momentânea ("sem SSE"). A captura com streaming confirmou os frames `data:`.
 
 Não há fonte pública: doc oficial só diz "respostas em tempo real"; sem OpenAPI público (401/403), sem SDK, sem CLI de inferência open-source, sem exemplo de comunidade com parsing real. **O exemplo oficial sequer faz streaming** (`print(response.text)` sem `stream=True`).
 
@@ -72,3 +93,23 @@ Não há endpoint público de listagem de agents; `agentId` é copiado da URL do
 
 A doc só mostra `"stop"`; nenhum outro valor enumerado. **Defensivo (já no código):** `"stop"`→`stop`; desconhecido→`stop` + log. Hipóteses provisionadas: `length`/`max_tokens`→`length`; `content_filter`→`content_filter`.
 **Validar no corp env:** forçar truncamento (max baixo), filtro de conteúdo e tool-call; catalogar os `stop_reason` reais.
+
+---
+
+## OQ-7 — Structured Output (saída por JSON Schema) · ⚠️ comportamento via API DESCONHECIDO
+
+Confirmado-oficial (Create Agents → Advanced Settings → "Structure output"): o agent pode ser
+configurado para gerar **toda resposta no formato de um JSON Schema definido pelo usuário** —
+*"the LLM generates all responses in JSON schema format... makes sure that the response follows a
+specific, predefined format."* É a base potencial para um tool-calling robusto (schema genérico de
+chamada de ferramenta → o GAMBI parseia em `tool_calls` OpenAI).
+
+A doc **não cobre** como isso se comporta via API. **Validar no corp env** (criar um agent com schema
+genérico de tool-call e capturar):
+1. **Onde o JSON volta:** o campo `message` vira a string JSON do schema? Há campo separado?
+2. **Confiabilidade:** respeita o schema sempre (testar 5-10 prompts variados)? Em quais modelos LLM?
+3. **Com streaming ligado:** o JSON vem fragmentado nos frames `data:` ou só no frame final?
+
+Relacionadas (recursos do agent achados e não explorados — pesquisa futura): Planner Type
+"Tool-Oriented", Multi-Agent/Orchestrator agents, Memory Management (Buffer/Summary/Vectorized — pode
+permitir usar `conversation_id` em vez de achatar histórico), Conversation vs Systematic agents.
