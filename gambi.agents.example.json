@@ -11,5 +11,19 @@
   {
     "model_id": "stackspot-arch",
     "agent_id": "OUTRO_AGENT_ID"
+  },
+  {
+    "model_id": "stackspot-dev-agent",
+    "agent_id": "AGENT_ID_COM_STRUCTURED_OUTPUT",
+    "structured_output": true,
+    "comment": "agent de AGENT MODE (Structured Output + system prompt; ver docs/stackspot-agent-mode-setup.md)"
+  },
+  {
+    "comment": "ALIAS: exporta só 'stackspot-llm-5.1' no VS Code; roteia por modo (sem tools=ask, com tools=agent/edit)",
+    "model_id": "stackspot-llm-5.1",
+    "modes": {
+      "ask": { "agent_id": "AGENT_ID_DE_CHAT", "stackspot_knowledge": true },
+      "agent": { "agent_id": "AGENT_ID_ESTRUTURADO", "structured_output": true }
+    }
   }
 ]

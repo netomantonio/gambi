@@ -47,6 +47,7 @@ def build_app(settings: Settings | None = None):
         await http_client.aclose()
 
     return create_app(
+        catalog=catalog,
         list_models=ListModels(catalog),
         create_chat_completion=CreateChatCompletion(catalog, invoker),
         create_chat_completion_stream=CreateChatCompletionStream(catalog, streamer),

@@ -41,6 +41,6 @@ class AgentCatalogPort(Protocol):
         """Lista os agents expostos como modelos OpenAI."""
         ...
 
-    def resolve(self, model_id: str) -> CatalogEntry | None:
-        """Resolve um `model` OpenAI para a entrada de catálogo (agent + opções), ou None."""
+    def resolve(self, model_id: str, mode: str) -> CatalogEntry | None:
+        """Resolve `model` + modo ("ask"/"agent") para a entrada concreta, ou None."""
         ...

@@ -105,15 +105,42 @@ class StackSpotAgentOptions:
     return_ks_in_response: bool = False
     knowledge_source_ids: tuple[str, ...] = ()
     agent_version_number: int | None = None
+    # Agent configurado com Structured Output no StackSpot (sempre emite o JSON do nosso schema).
+    # Quando True, o GAMBI bufferiza não-stream e parseia a saída, mesmo sem `tools` no request.
+    structured_output: bool = False
 
 
 @dataclass(frozen=True)
 class CatalogEntry:
-    """Um agent StackSpot exposto como 'modelo' OpenAI, com suas opções de request."""
+    """Alvo já resolvido (modelo exportado + agent concreto) consumido pelo use case."""
 
     model_id: str
     agent_id: str
     options: StackSpotAgentOptions = field(default_factory=StackSpotAgentOptions)
+
+
+@dataclass(frozen=True)
+class AgentTarget:
+    """Um agent StackSpot concreto + suas opções (destino de um modo)."""
+
+    agent_id: str
+    options: StackSpotAgentOptions = field(default_factory=StackSpotAgentOptions)
+
+
+@dataclass(frozen=True)
+class ModelRoute:
+    """Um modelo exportado (`model_id`) → agent StackSpot por modo de chat.
+
+    Modelo simples: mesmo target para todos os modos. Alias: target por modo ("ask"/"agent",
+    onde "agent" cobre edit+agent = qualquer modo com `tools`).
+    """
+
+    model_id: str
+    by_mode: dict[str, AgentTarget]
+
+    def target_for(self, mode: str) -> AgentTarget:
+        # modo exato; senão, fallback para qualquer target disponível (alias incompleto).
+        return self.by_mode.get(mode) or next(iter(self.by_mode.values()))
 
 
 @dataclass(frozen=True)

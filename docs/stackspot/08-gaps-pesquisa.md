@@ -96,25 +96,40 @@ A doc só mostra `"stop"`; nenhum outro valor enumerado. **Defensivo (já no có
 
 ---
 
-## OQ-7 — Structured Output (saída por JSON Schema) · ⚠️ comportamento via API DESCONHECIDO
+## OQ-7 — Structured Output (saída por JSON Schema) · ✅ RESOLVIDA POR CAPTURA REAL (2026-06-15)
 
-Confirmado-oficial (Create Agents → Advanced Settings → "Structure output"): o agent pode ser
-configurado para gerar **toda resposta no formato de um JSON Schema definido pelo usuário** —
-*"the LLM generates all responses in JSON schema format... makes sure that the response follows a
-specific, predefined format."* É a base potencial para um tool-calling robusto (schema genérico de
-chamada de ferramenta → o GAMBI parseia em `tool_calls` OpenAI).
+Confirmado-oficial (Create Agents → Advanced Settings → "Structure output"): o agent gera toda resposta
+no formato de um JSON Schema definido pelo usuário. **Captura real contra o nosso contrato confirmou:**
+1. **Onde o JSON volta:** ✅ no campo **`message`, como STRING** do JSON do schema
+   (ex.: `message = '{"action":"final","content":"...","tool_calls":[]}'`). Premissa do parser confirmada.
+2. **Confiabilidade:** o agent respeitou o schema (1 amostra, `action=final`). Robustez extra no GAMBI:
+   `parse_structured_response.matched` + 1 repair retry (reprompt) antes do fallback p/ texto.
+3. **Com streaming ligado:** ✅ o StackSpot **fragmenta o JSON caractere-a-caractere** nos frames `data:`
+   (incremental). Por isso o GAMBI, em modo estruturado/agent mode, chama o StackSpot **não-streaming**
+   (precisa do JSON inteiro p/ parsear) e re-emite ao VS Code como SSE/JSON.
 
-A doc **não cobre** como isso se comporta via API. **Validar no corp env** (criar um agent com schema
-genérico de tool-call e capturar):
-1. **Onde o JSON volta:** o campo `message` vira a string JSON do schema? Há campo separado?
-2. **Confiabilidade:** respeita o schema sempre (testar 5-10 prompts variados)? Em quais modelos LLM?
-3. **Com streaming ligado:** o JSON vem fragmentado nos frames `data:` ou só no frame final?
+> **Gap remanescente (validar — A2):** a captura só exercitou `action=final` (o input já trazia
+> `## RESULTADOS DAS FERRAMENTAS` pronto). **Falta validar a emissão de `action=tool_call`** — re-rodar
+> o agent estruturado SÓ com FERRAMENTAS + CONVERSA (sem RESULTADOS) e confirmar que vem
+> `action=tool_call` com `createFile` + `arguments_json`.
 
-> **Status do código (2026-06-15):** o GAMBI **já implementa** entrada (contrato de prompt) e saída
-> (parse `message`→`tool_calls`, com fallback p/ texto), assumindo que o JSON vem em `message`. As 3
-> capturas acima validam a premissa; se #1 divergir, ajusta-se `reply.message` no use case (um ponto).
-> Ver `docs/stackspot-agent-mode-setup.md` §5.
+> **Status do código (2026-06-15):** GAMBI implementa entrada (contrato de prompt) e saída
+> (parse `message`→`tool_calls`/content, fallback p/ texto). A flag por-agent **`structured_output`**
+> faz o GAMBI bufferizar+parsear mesmo em ask mode (sem tools), evitando vazar JSON cru. Ver
+> `docs/stackspot-agent-mode-setup.md` §5 e `README` (config por-agent).
 
 Relacionadas (recursos do agent achados e não explorados — pesquisa futura): Planner Type
 "Tool-Oriented", Multi-Agent/Orchestrator agents, Memory Management (Buffer/Summary/Vectorized — pode
 permitir usar `conversation_id` em vez de achatar histórico), Conversation vs Systematic agents.
+
+---
+
+## OQ-8 — Detecção do modo de chat do VS Code (ask/edit/agent) · ⚠️ parcial (só 2-vias)
+
+Pesquisa (doc do VS Code + comportamento do Custom Endpoint): **não há sinal explícito de modo** no
+request (nenhum campo/header). Único sinal confiável é a presença de `tools`:
+- **sem `tools` → ask**; **com `tools` → edit OU agent** (indistinguíveis sem heurística frágil).
+
+Decisão de projeto: roteamento por modo é **2-vias** (`ask` vs `agent`), onde `agent` cobre edit+agent.
+Implementado via alias `modes:{ask,agent}` no catálogo (`ModelRoute`); o GAMBI mapeia `mode = "agent" if tools else "ask"`.
+Modos custom (`.chatmode.md`) não são detectáveis → caem no bucket `agent` quando mandam tools, senão `ask`.

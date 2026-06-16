@@ -1,17 +1,44 @@
-# Setup StackSpot — Agent dedicado a "agent mode" (Structured Output + System Prompt)
+# Setup StackSpot — Agents por LLM (ASK + AGENT/EDIT)
 
-> **Isto é setup no portal do StackSpot, não código.** Cole o JSON Schema no campo *Structure output*
-> (Advanced Settings) e o system prompt no campo de instruções do agent. Objetivo: que o agent emita
-> **sempre** um JSON previsível que o GAMBI traduz em `tool_calls` OpenAI → habilita o agent mode do VS Code.
->
-> ⚠️ Use isto num **agent dedicado** (ex.: `stackspot-dev-agent`), separado do seu agent de chat normal —
-> porque com structured output o agent **sempre** responde JSON (não serve pra chat em texto puro).
->
-> ⚠️ Status: depende de validar a **OQ-7** (como o structured output volta na API / streaming) — ver
-> `docs/stackspot/08-gaps-pesquisa.md`. Este doc é o lado StackSpot; a metade em código do GAMBI
-> (injetar tools no prompt, parsear, montar `tool_calls`, loop de resultado) vem **depois** da validação.
+> **Isto é setup no portal do StackSpot, não código.** Cole o System Prompt no campo de instruções e,
+> quando indicado, o JSON Schema no campo *Structure output* (Advanced Settings).
 
-## 1. JSON Schema para o campo "Structure output"
+## 0. Os DOIS agents por LLM (visão geral) — leia primeiro
+
+Para **cada LLM** que você quer expor (ex.: `stackspot-llm-5.1`), crie **dois agents StackSpot**, porque
+o modo do chat no VS Code muda o que o GAMBI precisa:
+
+| Agent | Atende | Structure output | System prompt | No `gambi.agents.json` |
+|---|---|---|---|---|
+| **ASK** | ask mode (sem tools) | **DESLIGADO** | chat/assistente (texto/markdown) — ver §0.1 | `modes.ask` + `structured_output:false` |
+| **AGENT/EDIT** | edit + agent (com tools) | **LIGADO** (schema da §1) | contrato de agent mode — ver §2 | `modes.agent` + `structured_output:true` |
+
+Por que separados: o agent AGENT/EDIT tem Structured Output **ligado** → responde **sempre** JSON (ótimo p/
+tool calling, péssimo p/ chat). O agent ASK tem Structured Output **desligado** → responde **texto/markdown**
+normal. Misturar quebra um dos modos. O GAMBI roteia automaticamente (sem tools→ask; com tools→agent) — ver
+`README` ("Um modelo, vários agents por modo").
+
+### 0.1. System Prompt do agent **ASK** (Structure output = DESLIGADO)
+
+```text
+Você é um assistente de programação acessado pelo VS Code (modo ask) através de um proxy (GAMBI).
+
+REGRAS:
+- Responda em markdown claro e direto; use blocos de código com a linguagem correta (```python, ```bash...).
+- Responda no MESMO idioma da pergunta do usuário.
+- NÃO use JSON nem nenhum envelope estruturado — apenas a resposta em texto/markdown.
+- Seja objetivo: explique o essencial, mostre código aplicável, evite encher linguiça.
+
+COMPORTAMENTO (ajuste ao seu domínio):
+- [coloque as regras do seu time: stack, convenções, tom, limites]
+```
+> No portal, **deixe o "Structure output" DESLIGADO** neste agent. Personalize só o bloco COMPORTAMENTO.
+
+---
+
+O restante deste doc (§1–§5) configura o agent **AGENT/EDIT** (o estruturado).
+
+## 1. JSON Schema para o campo "Structure output" (agent AGENT/EDIT)
 
 Genérico de propósito (não enumera ferramentas — elas vêm no prompt em runtime). Os `arguments` vão como
 **string JSON** (igual ao `tool_calls[].function.arguments` da OpenAI), o que evita problemas de strict mode
@@ -125,24 +152,32 @@ exatamente assim, para o agent saber parsear:
 (A seção FERRAMENTAS vem da array `tools` do VS Code; a CONVERSA, do `messages`; os RESULTADOS, das mensagens
 `role:"tool"` que o VS Code devolve após executar uma `tool_call`. Tudo montado pelo GAMBI — ver passo 5.)
 
-## 3. Onde colar no portal
+## 3. Onde colar no portal + registrar no GAMBI
 - **System prompt:** campo de instruções do agent (máx. 8.000 chars).
 - **Structure output:** Advanced Settings → ative "Structure output" → cole o JSON do passo 1.
 - Salve como um **agent novo** (não sobrescreva seu agent de chat).
+- **No GAMBI** (`gambi.agents.json`): registre esse agent com **`"structured_output": true`** — assim o
+  GAMBI bufferiza e parseia a saída mesmo em ask mode (sem isso, em ask mode o JSON vazaria cru). Ex.:
+  `{"model_id":"stackspot-dev-agent","agent_id":"<id>","structured_output":true}`.
+- **Recomendado — um modelo só, roteado por modo:** em vez de expor um agent separado para agent mode, use a
+  forma `modes` para que o VS Code veja **um único** `stackspot-llm-5.1` e o GAMBI escolha o agent pelo modo
+  (sem tools = ask; com tools = agent/edit). Ver `README` ("Um modelo, vários agents por modo") e `gambi.agents.example.json`.
+  Assim `ask` aponta para um agent de chat e `agent` para este agent estruturado.
 
-## 4. Validação (responde a OQ-7 — capture e me mande)
-Com o agent criado, chame via API e capture:
-1. **Onde o JSON volta:** o campo `message` da resposta vira a **string JSON** do schema? Há campo separado?
+## 4. Validação (OQ-7)
+- ✅ **Resolvido (captura 2026-06-15):** o JSON volta no campo **`message` como string**; no streaming o
+  StackSpot **fragmenta o JSON char-a-char** (por isso o GAMBI chama não-streaming em modo estruturado).
+  Tokens (`input`/`output`) e `stop_reason` conforme esperado.
+- ⏳ **Falta validar (A2): emissão de `action=tool_call`.** A captura só exercitou `action=final` (o input
+  já trazia RESULTADOS). Re-rode SÓ com FERRAMENTAS + CONVERSA (sem RESULTADOS) e confirme `tool_call`:
    ```bash
    curl -sN ".../v1/agent/<id-do-agent-structured>/chat" -H "Authorization: Bearer $JWT" \
      -H "Content-Type: application/json" \
-     -d '{"streaming": false, "user_prompt": "diga olá", "stackspot_knowledge": false}'
+     -d '{"streaming": false, "user_prompt": "## FERRAMENTAS DISPONÍVEIS\n- nome: createFile ...\n\n## CONVERSA\n[Usuário] crie hello.py", "stackspot_knowledge": false}'
    ```
-2. **Confiabilidade:** rode ~5-10 prompts variados — ele respeita o schema sempre? Em quais modelos LLM?
-3. **Com streaming (`streaming: true`):** o JSON vem fragmentado nos frames `data:` (parcial) ou só inteiro no fim?
 
 ## 5. A metade em código do GAMBI — ✅ IMPLEMENTADA (2026-06-15)
-Já está no código (pendente só de validar a premissa de onde o JSON volta — ver "Premissa" abaixo):
+Já está no código:
 - **Injeta** no `user_prompt` a seção "FERRAMENTAS DISPONÍVEIS" a partir do array `tools` do VS Code,
   além de "CONVERSA" e "RESULTADOS DAS FERRAMENTAS" (`gambi/domain/flattener.py`).
 - **Parseia** o JSON do `message` (`gambi/domain/structured.py`): `action=tool_call` → `tool_calls` OpenAI
@@ -153,9 +188,11 @@ Já está no código (pendente só de validar a premissa de onde o JSON volta �
 - Em agent mode o GAMBI chama o StackSpot **não-streaming** (precisa do JSON inteiro) e entrega ao
   VS Code em SSE ou JSON conforme o `stream` do request.
 
-> **Premissa a validar (OQ-7):** o parser assume que o JSON estruturado vem no campo `message` da
-> resposta. Se a captura real mostrar outro lugar, muda-se **um ponto** (`reply.message` no use case).
-> Falta também medir confiabilidade do schema e comportamento com streaming ligado.
+- **Robustez (G):** se o agent furar o schema, o GAMBI faz 1 *repair retry* (reprompt "responda só o JSON")
+  antes do fallback p/ texto. E a flag **`structured_output`** garante parse mesmo sem tools (ask mode).
+
+> **Premissa confirmada (OQ-7):** o JSON estruturado vem em `message` (string) — validado por captura.
+> Resta validar a emissão de `action=tool_call` (passo 4, A2).
 
 ## Restrições honestas
 - Argumentos corretos dependem do agent seguir o schema da ferramenta **injetado no prompt** — o structured

@@ -36,19 +36,25 @@ Dois hosts distintos aparecem na doc do StackSpot:
 - **`genai-inference-app.stackspot.com`** — execução **síncrona** de agent (`/v1/agent/{agentId}/chat`). É o que mais se parece com `chat/completions`. **É o alvo primário do GAMBI.**
 - **`genai-data-integration-api.stackspot.com`** + **`data-integration-api.stackspot.com`** — Quick Commands **assíncronos** (create-execution + polling por `execution_id`) e gestão de Knowledge Sources/uploads.
 
-## Perguntas abertas consolidadas (bloqueiam decisões de design)
+## Perguntas abertas consolidadas
 
-Estas precisam ser respondidas contra a API real / suporte StackSpot antes de fechar o domínio:
+> **Fonte canônica e graduada por evidência:** [`08-gaps-pesquisa.md`](08-gaps-pesquisa.md) (OQ-1..8 com status e capturas reais). Abaixo, só um snapshot.
 
-1. **Formato exato dos eventos SSE** quando `streaming: true`. A doc só diz "entregue via Server-Sent Events" — não mostra o shape de cada `data:` chunk (campos, delta vs cumulativo, evento de término). → ver [02](02-agents-api.md). **É o maior bloqueio para o streaming OpenAU-compatible.**
-2. **Como o cliente seleciona o agent.** O modelo LLM é fixado na criação do agent (UI); a chamada não recebe `model`. O `agentId` vai na URL. Mapear o campo `model` da OpenAI → `agentId`/slug é decisão do GAMBI. → ver [06](06-modelos-llm.md) e [07](07-mapeamento-openai-stackspot.md).
-3. **Semântica de `conversation_id` / `use_conversation` na API** (multi-turno). A página de chat-history documenta só a IDE. → ver [02](02-agents-api.md).
-4. **Valor do `realm`** no endpoint de token: Freemium parece usar `stackspot`; Enterprise usa `{your_account_realm}`. Confirmar. → ver [01](01-autenticacao.md).
-5. **Origem do `x-account-id`** exigido no upload form. → ver [03](03-upload-files.md).
-6. **Criação de agent via API** — a doc descreve só criação via UI; existência de endpoint não confirmada. → ver [06](06-modelos-llm.md).
-7. **Rate limits da Agents API síncrona** (`/v1/agent/.../chat`). A doc só publica limites de Quick Commands e PAT. → ver [05](05-remote-quick-commands.md).
-8. **Formato de erros** (status codes, corpo) de todas as APIs — não documentado.
-9. **Mapeamento de `stop_reason`** do StackSpot para `finish_reason` da OpenAI — valores possíveis além de `stop` desconhecidos.
+**✅ Resolvidas (por captura real / pesquisa):**
+- **OQ-1/OQ-7 — SSE e structured output:** o `message` volta como string; com `streaming:true` o StackSpot fragmenta o JSON char-a-char (por isso bufferizamos não-stream em modo estruturado/agent).
+- **OQ-2 — contrato VS Code Custom Endpoint:** SSE OpenAI-padrão, sem `/v1/models` obrigatório, sem assinatura.
+- **OQ-3/OQ-4 — seleção de agent:** `model` → `agentId` via catálogo config (sem API de listagem); alias por modo.
+- **OQ-5 — realm/token:** `realm` = slug da conta; TTL 1200s (prioriza `expires_in`).
+- **OQ-8 — detecção de modo:** 2-vias (sem tools=ask / com tools=agent); edit↔agent indistinguíveis (aceito).
+- **tokens:** prompt em `input`, `user`/`enrichment` podem ser null.
+
+**⏳ Ainda abertas (validar no corp env / fora do v1):**
+- **A2 — emissão de `action=tool_call`:** só validamos `action=final`; falta capturar um tool_call real. → [08](08-gaps-pesquisa.md) OQ-7.
+- **OQ-6 — valores de `stop_reason`** além de `stop` (mapeamento defensivo por ora).
+- **Multi-turno server-side** via `conversation_id` (v1 é stateless). → [02](02-agents-api.md).
+- **Formato de erros** do StackSpot (status/corpo) — mapeamos defensivamente para o envelope OpenAI.
+- **Rate limits da Agents API síncrona** (só há números p/ Quick Commands). → [05](05-remote-quick-commands.md).
+- Itens fora do v1: `x-account-id`/upload ([03](03-upload-files.md)), criação de agent via API ([06](06-modelos-llm.md)).
 
 ## Fontes
 

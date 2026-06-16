@@ -32,13 +32,26 @@ O `GAMBI_AGENTS` é o atalho simples (só `modelo=agentId`). Para definir **opç
   { "model_id": "stackspot-dev", "agent_id": "01ABC...",
     "stackspot_knowledge": false, "deep_search_ks": false,
     "return_ks_in_response": false, "knowledge_source_ids": [],
-    "agent_version_number": 1 }
+    "agent_version_number": 1 },
+  { "model_id": "stackspot-dev-agent", "agent_id": "01XYZ...",
+    "structured_output": true }
 ]
 ```
 ```bash
 export GAMBI_AGENTS_FILE=./gambi.agents.json
 ```
-Só `model_id` e `agent_id` são obrigatórios; o resto herda defaults seguros (`stackspot_knowledge` cai no `GAMBI_STACKSPOT_KNOWLEDGE`). Esses campos são enviados no request ao StackSpot (os mesmos do curl que você captura no portal).
+Só `model_id` e `agent_id` são obrigatórios; o resto herda defaults seguros (`stackspot_knowledge` cai no `GAMBI_STACKSPOT_KNOWLEDGE`). Esses campos são enviados no request ao StackSpot. Use **`"structured_output": true`** para o agent de **agent mode** (configurado com Structured Output no StackSpot — ver [docs/stackspot-agent-mode-setup.md](docs/stackspot-agent-mode-setup.md)): o GAMBI passa a bufferizar+parsear a saída JSON em `tool_calls`/conteúdo, inclusive em ask mode.
+
+### Um modelo, vários agents por modo (alias)
+Para expor **um só modelo** no VS Code que roteia para agents diferentes conforme o **modo do chat**, use a forma `modes`:
+```json
+{ "model_id": "stackspot-llm-5.1",
+  "modes": {
+    "ask":   { "agent_id": "01ASK",   "stackspot_knowledge": true },
+    "agent": { "agent_id": "01AGENT", "structured_output": true }
+  } }
+```
+O VS Code vê só `stackspot-llm-5.1`. **Detecção de modo (determinística):** request **sem `tools` → `ask`**; **com `tools` → `agent`** (cobre os modos Edit e Agent do VS Code — não há sinal confiável para separá-los). Modelos sem `modes` são mode-agnostic (mesmo agent em qualquer modo).
 
 ## Integrar ao VS Code Copilot Chat
 

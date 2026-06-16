@@ -12,11 +12,18 @@ from gambi.application.use_cases import (
 from gambi.domain.models import (
     AgentReply,
     AgentStreamEvent,
-    CatalogEntry,
+    AgentTarget,
+    ModelRoute,
     StackSpotAgentOptions,
     UpstreamError,
     Usage,
 )
+
+
+def _route(model_id="stackspot-dev", agent_id="agent-1", options=None) -> ModelRoute:
+    """Rota mode-agnostic p/ testes: mesmo target em ask e agent."""
+    target = AgentTarget(agent_id=agent_id, options=options or StackSpotAgentOptions())
+    return ModelRoute(model_id=model_id, by_mode={"ask": target, "agent": target})
 
 
 class FakeInvoker:
@@ -44,7 +51,7 @@ def build_client(
     reply: AgentReply | None = None,
     stream_events: list[AgentStreamEvent] | None = None,
 ) -> tuple[TestClient, FakeInvoker]:
-    catalog = ConfigAgentCatalog([CatalogEntry(model_id="stackspot-dev", agent_id="agent-1")])
+    catalog = ConfigAgentCatalog([_route()])
     invoker = FakeInvoker(reply or AgentReply(message="oi", stop_reason="stop", usage=Usage(1, 2)))
     streamer = FakeStreamer(
         stream_events
@@ -56,6 +63,7 @@ def build_client(
         ]
     )
     app = create_app(
+        catalog=catalog,
         list_models=ListModels(catalog),
         create_chat_completion=CreateChatCompletion(catalog, invoker),
         create_chat_completion_stream=CreateChatCompletionStream(catalog, streamer),
@@ -205,8 +213,9 @@ class _SequenceInvoker:
 
 
 def _app_with_invoker(invoker) -> TestClient:
-    catalog = ConfigAgentCatalog([CatalogEntry(model_id="stackspot-dev", agent_id="agent-1")])
+    catalog = ConfigAgentCatalog([_route()])
     app = create_app(
+        catalog=catalog,
         list_models=ListModels(catalog),
         create_chat_completion=CreateChatCompletion(catalog, invoker),
         create_chat_completion_stream=CreateChatCompletionStream(catalog, FakeStreamer([])),
@@ -256,15 +265,10 @@ def test_agent_mode_repair_gives_up_after_one_retry():
 
 def _app_with_ks_agent(invoker=None, streamer=None) -> TestClient:
     catalog = ConfigAgentCatalog(
-        [
-            CatalogEntry(
-                model_id="stackspot-dev",
-                agent_id="agent-1",
-                options=StackSpotAgentOptions(return_ks_in_response=True),
-            )
-        ]
+        [_route(options=StackSpotAgentOptions(return_ks_in_response=True))]
     )
     app = create_app(
+        catalog=catalog,
         list_models=ListModels(catalog),
         create_chat_completion=CreateChatCompletion(
             catalog, invoker or FakeInvoker(AgentReply("x", "stop"))
@@ -318,6 +322,113 @@ def test_streaming_appends_sources_footer_when_return_ks_on():
     assert resp.text.strip().endswith("data: [DONE]")
 
 
+_FINAL_JSON = '{"action":"final","content":"olá do agent","tool_calls":[]}'
+
+
+def _app_with_structured_agent(invoker, return_ks=False) -> TestClient:
+    catalog = ConfigAgentCatalog(
+        [
+            _route(
+                options=StackSpotAgentOptions(
+                    structured_output=True, return_ks_in_response=return_ks
+                )
+            )
+        ]
+    )
+    app = create_app(
+        catalog=catalog,
+        list_models=ListModels(catalog),
+        create_chat_completion=CreateChatCompletion(catalog, invoker),
+        create_chat_completion_stream=CreateChatCompletionStream(catalog, FakeStreamer([])),
+    )
+    return TestClient(app)
+
+
+def test_structured_agent_ask_mode_nonstream_unwraps_content():
+    # Sem tools, mas agent estruturado → parseia e devolve content limpo (não vaza JSON).
+    client = _app_with_structured_agent(FakeInvoker(AgentReply(_FINAL_JSON, "stop")))
+    body = client.post(
+        "/v1/chat/completions",
+        json={"model": "stackspot-dev", "messages": [{"role": "user", "content": "oi"}]},
+    ).json()
+    content = body["choices"][0]["message"]["content"]
+    assert content == "olá do agent"
+    assert "action" not in content  # JSON do schema não vazou
+
+
+def test_structured_agent_ask_mode_streaming_unwraps_content():
+    client = _app_with_structured_agent(FakeInvoker(AgentReply(_FINAL_JSON, "stop")))
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "oi"}],
+            "stream": True,
+        },
+    )
+    text = resp.text
+    assert "olá do agent" in text
+    assert '"action"' not in text  # nada de fragmento de JSON cru
+    assert '"object": "chat.completion.chunk"' in text
+    assert text.strip().endswith("data: [DONE]")
+
+
+def test_structured_agent_final_gets_sources_footer():
+    invoker = FakeInvoker(AgentReply(_FINAL_JSON, "stop", sources=("ks-a",)))
+    body = (
+        _app_with_structured_agent(invoker, return_ks=True)
+        .post(
+            "/v1/chat/completions",
+            json={"model": "stackspot-dev", "messages": [{"role": "user", "content": "oi"}]},
+        )
+        .json()
+    )
+    content = body["choices"][0]["message"]["content"]
+    assert content.startswith("olá do agent")
+    assert "Fontes:" in content and "ks-a" in content
+
+
+def test_alias_routes_to_different_agent_per_mode_and_exports_one_model():
+    invoker = FakeInvoker(AgentReply("ok", "stop"))
+    route = ModelRoute(
+        model_id="stackspot-llm-5.1",
+        by_mode={
+            "ask": AgentTarget("agent-ask"),
+            "agent": AgentTarget("agent-tools", StackSpotAgentOptions(structured_output=True)),
+        },
+    )
+    catalog = ConfigAgentCatalog([route])
+    app = create_app(
+        catalog=catalog,
+        list_models=ListModels(catalog),
+        create_chat_completion=CreateChatCompletion(catalog, invoker),
+        create_chat_completion_stream=CreateChatCompletionStream(catalog, FakeStreamer([])),
+    )
+    client = TestClient(app)
+
+    # /v1/models exporta só o alias, não os agents internos
+    ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+    assert ids == ["stackspot-llm-5.1"]
+
+    # ask (sem tools) → agent do ask
+    client.post(
+        "/v1/chat/completions",
+        json={"model": "stackspot-llm-5.1", "messages": [{"role": "user", "content": "oi"}]},
+    )
+    assert invoker.seen[0] == "agent-ask"
+
+    # agent (com tools) → agent estruturado
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-llm-5.1",
+            "messages": [{"role": "user", "content": "crie x"}],
+            "tools": [{"type": "function", "function": {"name": "createFile", "parameters": {}}}],
+        },
+    )
+    assert invoker.seen[0] == "agent-tools"
+
+
 def test_chat_completion_unknown_model_returns_openai_error():
     client, _ = build_client()
     resp = client.post(
@@ -365,8 +476,9 @@ class _BoomStreamer:
 
 def test_streaming_upstream_error_is_surfaced_not_silent():
     # Erro após o 200 não pode falhar em silêncio: vira conteúdo visível + [DONE].
-    catalog = ConfigAgentCatalog([CatalogEntry(model_id="stackspot-dev", agent_id="agent-1")])
+    catalog = ConfigAgentCatalog([_route()])
     app = create_app(
+        catalog=catalog,
         list_models=ListModels(catalog),
         create_chat_completion=CreateChatCompletion(catalog, FakeInvoker(AgentReply("x", "stop"))),
         create_chat_completion_stream=CreateChatCompletionStream(catalog, _BoomStreamer()),

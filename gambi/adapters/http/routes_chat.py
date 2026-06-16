@@ -141,10 +141,20 @@ async def create_chat_completion(body: ChatCompletionRequest, request: Request):
     tools = _to_tools(body.tools)
     use_case: CreateChatCompletion = request.app.state.create_chat_completion
 
-    if tools:
-        # Agent mode: bufferiza não-stream (precisamos do JSON inteiro p/ parsear em tool_calls).
+    # Detecção de modo (determinística): sem tools = ask; com tools = agent (cobre edit+agent).
+    # Um modelo-alias roteia para agents StackSpot diferentes por modo.
+    mode = "agent" if tools else "ask"
+
+    # Agent estruturado sempre emite o JSON do nosso schema → bufferiza+parseia mesmo sem tools
+    # (senão, em ask mode, vazaria JSON cru). entry pode ser None (modelo desconhecido) → cai no
+    # caminho normal, onde execute() revalida e retorna 404.
+    entry = request.app.state.catalog.resolve(body.model, mode)
+    structured = bool(entry and entry.options.structured_output)
+
+    if structured or tools:
+        # Bufferiza não-stream (precisamos do JSON inteiro p/ parsear em content/tool_calls).
         # execute() valida o modelo ANTES → erro vira HTTP normal (404), sem stream meio-aberto.
-        result = await use_case.execute(body.model, conversation, tools)
+        result = await use_case.execute(body.model, conversation, tools, mode)
         if result.tool_calls:
             logger.info("agent mode: %d tool_calls emitidas", len(result.tool_calls))
         if body.stream:
@@ -154,8 +164,8 @@ async def create_chat_completion(body: ChatCompletionRequest, request: Request):
     if body.stream:
         # CAP-3: streaming SSE OpenAI (chat normal, sem tools).
         stream_uc: CreateChatCompletionStream = request.app.state.create_chat_completion_stream
-        chunks = await stream_uc.execute(body.model, conversation, tools)
+        chunks = await stream_uc.execute(body.model, conversation, tools, mode)
         return _sse_response(chunks, model=body.model)
 
-    result = await use_case.execute(body.model, conversation, tools)
+    result = await use_case.execute(body.model, conversation, tools, mode)
     return _render_completion(result)
