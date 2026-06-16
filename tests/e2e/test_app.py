@@ -112,6 +112,78 @@ def test_chat_completion_with_tools_is_accepted_not_422():
     assert resp.json()["object"] == "chat.completion"
 
 
+def test_agent_mode_prompt_format_reaches_stackspot():
+    # Com tools no request, o GAMBI deve montar o user_prompt no contrato de agent mode.
+    client, invoker = build_client()
+    client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "crie hello.py"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "createFile",
+                        "description": "Cria um arquivo",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        },
+    )
+    prompt = invoker.seen[1]
+    assert "## FERRAMENTAS DISPONÍVEIS" in prompt
+    assert "createFile" in prompt
+    assert "## CONVERSA" in prompt
+    assert "crie hello.py" in prompt
+
+
+_TOOL_CALL_JSON = (
+    '{"action":"tool_call","content":"",'
+    '"tool_calls":[{"name":"createFile","arguments_json":"{\\"path\\":\\"hello.py\\"}"}]}'
+)
+
+
+def test_agent_mode_tool_call_nonstream_renders_openai_tool_calls():
+    client, _ = build_client(AgentReply(message=_TOOL_CALL_JSON, stop_reason="stop"))
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "crie hello.py"}],
+            "tools": [{"type": "function", "function": {"name": "createFile", "parameters": {}}}],
+        },
+    )
+    assert resp.status_code == 200
+    choice = resp.json()["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["content"] is None
+    tc = choice["message"]["tool_calls"][0]
+    assert tc["type"] == "function"
+    assert tc["function"]["name"] == "createFile"
+    assert tc["function"]["arguments"] == '{"path":"hello.py"}'
+
+
+def test_agent_mode_tool_call_streaming_emits_tool_calls_sse():
+    client, _ = build_client(AgentReply(message=_TOOL_CALL_JSON, stop_reason="stop"))
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "crie hello.py"}],
+            "tools": [{"type": "function", "function": {"name": "createFile", "parameters": {}}}],
+            "stream": True,
+        },
+    )
+    assert resp.status_code == 200
+    text = resp.text
+    assert '"tool_calls"' in text
+    assert "createFile" in text
+    assert '"finish_reason": "tool_calls"' in text
+    assert text.strip().endswith("data: [DONE]")
+
+
 def test_chat_completion_unknown_model_returns_openai_error():
     client, _ = build_client()
     resp = client.post(

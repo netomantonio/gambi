@@ -23,16 +23,23 @@ A configuração persiste em `chatLanguageModels.json`. O editor **não** consul
 ## Suporte a streaming
 O GAMBI implementa **streaming SSE no formato OpenAI** (`stream:true`), que é o modo que o Copilot Chat usa. O consumo do streaming do StackSpot é **defensivo** (auto-detecta o formato) porque o shape do SSE do StackSpot não é público — **valide no ambiente corporativo** (ver `docs/stackspot/08-gaps-pesquisa.md`, OQ-1). Se o StackSpot não fizer streaming real, o GAMBI degrada para uma resposta única re-emitida como stream.
 
-## Ask mode vs Agent mode (importante)
+## Ask mode vs Agent mode
 
-- **Ask mode** (chat normal): ✅ funciona. O agent responde markdown com blocos de código; você aplica com "Apply"/copiar.
-- **Agent mode** (Copilot edita/cria arquivos sozinho): ⚠️ **não funciona como autônomo** com o GAMBI hoje. O agent mode depende de **tool calling** (o editor manda `tools` e espera `tool_calls`), e o **StackSpot não expõe tool calling** via API — os toolkits dele são internos ao agent. O GAMBI aceita o request (não dá erro) e o agent responde em **texto**, mas o editor **não consegue editar/criar arquivos automaticamente**.
+- **Ask mode** (chat normal): ✅ funciona. O agent responde markdown; você aplica com "Apply"/copiar.
+- **Agent mode** (Copilot edita/cria arquivos): ⚙️ **suportado, experimental** — o GAMBI traduz tool calling
+  do VS Code (`tools` → prompt; resposta estruturada do agent → `tool_calls`). **Requer um agent dedicado
+  com Structured Output + system prompt** configurados conforme **[stackspot-agent-mode-setup.md](stackspot-agent-mode-setup.md)**.
+  Ainda **pendente de validação real** (OQ-7: como o JSON estruturado volta na API).
 
-**Recomendação de config:** ao declarar o modelo no `chatLanguageModels.json`, marque **`toolCalling: false`** (e `vision: false`). Assim o VS Code usa o modelo em ask mode e não tenta o fluxo de agent mode (que ficaria travado esperando `tool_calls`).
+**Config:**
+- Modelo de **chat** (agent comum): `toolCalling: false`.
+- Modelo de **agent mode** (agent estruturado): `toolCalling: true` — declare-o como um modelo separado
+  apontando para o mesmo GAMBI, com o `id` do agent estruturado.
 
-**Como confirmar empiricamente:** com o GAMBI rodando (logs ligados), tente o agent mode uma vez e olhe o console — o GAMBI loga `agent mode detectado: N tools (...)`. Isso prova que o editor está pedindo tool calling que o StackSpot não atende.
+Se o agent estruturado ainda não estiver pronto, o GAMBI **degrada com segurança**: resposta não-JSON
+vira texto normal (não quebra), apenas sem edição autônoma de arquivos.
 
 ## Limitações do v1
-- **Agent mode autônomo** (editar/criar arquivos via tools) — depende de tool calling, que o StackSpot não expõe.
+- Agent mode é **experimental** até validar o Structured Output contra a API real (OQ-7).
 - Sem code completions inline (exigem conta GitHub — fora do escopo).
 - Multimodal/anexos fora do v1.

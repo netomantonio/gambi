@@ -13,9 +13,12 @@ from gambi.domain.models import (
     ChatResult,
     ChatStreamChunk,
     Conversation,
+    FinishReason,
     ModelNotFoundError,
     StackSpotAgentOptions,
+    ToolSpec,
 )
+from gambi.domain.structured import parse_structured_response
 
 logger = logging.getLogger("gambi.use_cases")
 
@@ -43,13 +46,30 @@ class CreateChatCompletion:
         self._flattener = flattener or ConversationFlattener()
         self._mapper = mapper or ResponseMapper()
 
-    async def execute(self, model_id: str, conversation: Conversation) -> ChatResult:
+    async def execute(
+        self,
+        model_id: str,
+        conversation: Conversation,
+        tools: tuple[ToolSpec, ...] = (),
+    ) -> ChatResult:
         entry = self._catalog.resolve(model_id)
         if entry is None:
             raise ModelNotFoundError(model_id)
 
-        user_prompt = self._flattener.flatten(conversation)
+        user_prompt = self._flattener.flatten(conversation, tools)
         reply = await self._invoker.invoke(entry.agent_id, user_prompt, entry.options)
+
+        if tools:
+            # Agent mode: a resposta vem como JSON do nosso schema → parseia em content/tool_calls.
+            content, tool_calls = parse_structured_response(reply.message)
+            finish = FinishReason.TOOL_CALLS if tool_calls else FinishReason.STOP
+            return ChatResult(
+                model_id=model_id,
+                content=content,
+                finish_reason=finish,
+                usage=reply.usage,
+                tool_calls=tool_calls,
+            )
         return self._mapper.to_chat_result(reply, model_id)
 
 
@@ -69,14 +89,17 @@ class CreateChatCompletionStream:
         self._finish = finish_mapper or FinishReasonMapper()
 
     async def execute(
-        self, model_id: str, conversation: Conversation
+        self,
+        model_id: str,
+        conversation: Conversation,
+        tools: tuple[ToolSpec, ...] = (),
     ) -> AsyncIterator[ChatStreamChunk]:
         # Validação ansiosa: resolve/achata ANTES de iniciar o stream, para que um
         # erro (ex.: modelo inexistente) vire HTTP 404 e não um stream meio-aberto.
         entry = self._catalog.resolve(model_id)
         if entry is None:
             raise ModelNotFoundError(model_id)
-        user_prompt = self._flattener.flatten(conversation)
+        user_prompt = self._flattener.flatten(conversation, tools)
         return self._generate(entry.agent_id, model_id, user_prompt, entry.options)
 
     async def _generate(

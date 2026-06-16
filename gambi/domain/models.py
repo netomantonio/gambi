@@ -17,6 +17,16 @@ class Role(StrEnum):
 class Message:
     role: Role
     content: str
+    name: str | None = None  # nome da ferramenta, quando role=TOOL (resultado de tool)
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """Uma ferramenta que o cliente (VS Code agent mode) disponibiliza por request."""
+
+    name: str
+    description: str
+    parameters_json: str  # JSON Schema dos argumentos, já serializado
 
 
 @dataclass(frozen=True)
@@ -34,6 +44,7 @@ class FinishReason(StrEnum):
     STOP = "stop"
     LENGTH = "length"
     CONTENT_FILTER = "content_filter"
+    TOOL_CALLS = "tool_calls"
 
 
 @dataclass(frozen=True)
@@ -60,13 +71,25 @@ class AgentReply:
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """Uma chamada de ferramenta decidida pelo agent (agent mode). id é atribuído na borda HTTP."""
+
+    name: str
+    arguments_json: str
+
+
+@dataclass(frozen=True)
 class ChatResult:
-    """Resultado pronto para virar um `chat.completion` OpenAI."""
+    """Resultado pronto para virar um `chat.completion` OpenAI.
+
+    `content` é None quando há `tool_calls` (o agent pediu ferramentas em vez de responder).
+    """
 
     model_id: str
-    content: str
+    content: str | None
     finish_reason: FinishReason
     usage: Usage
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,6 +138,7 @@ class ChatStreamChunk:
     delta: str | None = None
     finish_reason: FinishReason | None = None
     usage: Usage | None = None
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 # --- Exceções de domínio (mapeadas para o envelope de erro OpenAI na borda) ---

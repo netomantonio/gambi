@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 
 from gambi.domain.models import ChatStreamChunk
@@ -43,6 +44,24 @@ async def serialize_openai_sse(
                 delta["content"] = chunk.delta
                 yield _sse(
                     {**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+                )
+
+            if chunk.tool_calls:
+                tc_delta: dict = {}
+                if not role_sent:
+                    tc_delta["role"] = "assistant"
+                    role_sent = True
+                tc_delta["tool_calls"] = [
+                    {
+                        "index": i,
+                        "id": f"call_{uuid.uuid4().hex}",
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": tc.arguments_json},
+                    }
+                    for i, tc in enumerate(chunk.tool_calls)
+                ]
+                yield _sse(
+                    {**base, "choices": [{"index": 0, "delta": tc_delta, "finish_reason": None}]}
                 )
 
             if chunk.finish_reason is not None:

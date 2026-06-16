@@ -110,6 +110,11 @@ genérico de tool-call e capturar):
 2. **Confiabilidade:** respeita o schema sempre (testar 5-10 prompts variados)? Em quais modelos LLM?
 3. **Com streaming ligado:** o JSON vem fragmentado nos frames `data:` ou só no frame final?
 
+> **Status do código (2026-06-15):** o GAMBI **já implementa** entrada (contrato de prompt) e saída
+> (parse `message`→`tool_calls`, com fallback p/ texto), assumindo que o JSON vem em `message`. As 3
+> capturas acima validam a premissa; se #1 divergir, ajusta-se `reply.message` no use case (um ponto).
+> Ver `docs/stackspot-agent-mode-setup.md` §5.
+
 Relacionadas (recursos do agent achados e não explorados — pesquisa futura): Planner Type
 "Tool-Oriented", Multi-Agent/Orchestrator agents, Memory Management (Buffer/Summary/Vectorized — pode
 permitir usar `conversation_id` em vez de achatar histórico), Conversation vs Systematic agents.

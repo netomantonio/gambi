@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -15,11 +16,13 @@ from gambi.adapters.http.schemas_openai import (
     ChatMessage,
     Choice,
     ResponseMessage,
+    ResponseToolCall,
+    ToolCallFunction,
     Usage,
 )
 from gambi.adapters.http.sse import serialize_openai_sse
 from gambi.application.use_cases import CreateChatCompletion, CreateChatCompletionStream
-from gambi.domain.models import Conversation, Message, Role
+from gambi.domain.models import ChatResult, ChatStreamChunk, Conversation, Message, Role, ToolSpec
 
 router = APIRouter()
 logger = logging.getLogger("gambi.http.chat")
@@ -37,7 +40,13 @@ def _content_to_text(content: str | list[dict] | None) -> str:
 
 def _to_conversation(messages: list[ChatMessage]) -> Conversation:
     domain_messages = tuple(
-        Message(role=_to_role(m.role), content=_content_to_text(m.content)) for m in messages
+        Message(
+            role=_to_role(m.role),
+            content=_content_to_text(m.content),
+            # resultado de ferramenta (role="tool") carrega o nome p/ a seção RESULTADOS
+            name=m.name or m.tool_call_id,
+        )
+        for m in messages
     )
     return Conversation(messages=domain_messages)
 
@@ -50,6 +59,75 @@ def _to_role(role: str) -> Role:
         return Role.USER
 
 
+def _to_tools(tools: list[dict] | None) -> tuple[ToolSpec, ...]:
+    """Converte o array `tools` da OpenAI em ToolSpec do domínio (function calling)."""
+    if not tools:
+        return ()
+    specs: list[ToolSpec] = []
+    for tool in tools:
+        fn = tool.get("function") if isinstance(tool, dict) else None
+        if not isinstance(fn, dict) or not fn.get("name"):
+            continue
+        specs.append(
+            ToolSpec(
+                name=str(fn["name"]),
+                description=str(fn.get("description", "")),
+                parameters_json=json.dumps(fn.get("parameters", {}), ensure_ascii=False),
+            )
+        )
+    return tuple(specs)
+
+
+def _render_completion(result: ChatResult) -> ChatCompletionResponse:
+    if result.tool_calls:
+        message = ResponseMessage(
+            content=None,
+            tool_calls=[
+                ResponseToolCall(
+                    id=f"call_{uuid.uuid4().hex}",
+                    function=ToolCallFunction(name=tc.name, arguments=tc.arguments_json),
+                )
+                for tc in result.tool_calls
+            ],
+        )
+    else:
+        message = ResponseMessage(content=result.content)
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{uuid.uuid4().hex}",
+        created=int(time.time()),
+        model=result.model_id,
+        choices=[Choice(message=message, finish_reason=result.finish_reason.value)],
+        usage=Usage(
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+        ),
+    )
+
+
+async def _result_to_chunks(result: ChatResult):
+    """Converte um ChatResult (agent mode, já parseado) em chunks p/ o serializador SSE."""
+    if result.tool_calls:
+        yield ChatStreamChunk(model_id=result.model_id, tool_calls=result.tool_calls)
+    elif result.content:
+        yield ChatStreamChunk(model_id=result.model_id, delta=result.content)
+    yield ChatStreamChunk(
+        model_id=result.model_id, finish_reason=result.finish_reason, usage=result.usage
+    )
+
+
+def _sse_response(chunks, *, model: str) -> StreamingResponse:
+    return StreamingResponse(
+        serialize_openai_sse(
+            chunks,
+            response_id=f"chatcmpl-{uuid.uuid4().hex}",
+            created=int(time.time()),
+            model=model,
+        ),
+        media_type="text/event-stream",
+    )
+
+
 @router.post("/v1/chat/completions")
 async def create_chat_completion(body: ChatCompletionRequest, request: Request):
     logger.info(
@@ -59,51 +137,25 @@ async def create_chat_completion(body: ChatCompletionRequest, request: Request):
         len(body.messages),
         len(body.tools or []),
     )
-    if body.tools:
-        # Agent mode: o VS Code mandou ferramentas e espera `tool_calls` de volta.
-        # O StackSpot não expõe tool calling → o agent vai responder em TEXTO, e o editor
-        # NÃO conseguirá editar/criar arquivos autonomamente. Limitação conhecida (não-bug).
-        tool_names = [t.get("function", {}).get("name") for t in body.tools if isinstance(t, dict)]
-        logger.warning(
-            "agent mode detectado: %d tools (%s). GAMBI não faz tool-calling "
-            "(StackSpot não expõe); a resposta virá em texto, sem editar arquivos.",
-            len(body.tools),
-            tool_names,
-        )
-
     conversation = _to_conversation(body.messages)
+    tools = _to_tools(body.tools)
+    use_case: CreateChatCompletion = request.app.state.create_chat_completion
+
+    if tools:
+        # Agent mode: bufferiza não-stream (precisamos do JSON inteiro p/ parsear em tool_calls).
+        # execute() valida o modelo ANTES → erro vira HTTP normal (404), sem stream meio-aberto.
+        result = await use_case.execute(body.model, conversation, tools)
+        if result.tool_calls:
+            logger.info("agent mode: %d tool_calls emitidas", len(result.tool_calls))
+        if body.stream:
+            return _sse_response(_result_to_chunks(result), model=result.model_id)
+        return _render_completion(result)
 
     if body.stream:
-        # CAP-3: streaming SSE OpenAI (o que o VS Code Copilot Chat usa).
+        # CAP-3: streaming SSE OpenAI (chat normal, sem tools).
         stream_uc: CreateChatCompletionStream = request.app.state.create_chat_completion_stream
-        # execute() valida o modelo ANTES do stream → erro vira HTTP normal (ex.: 404).
-        chunks = await stream_uc.execute(body.model, conversation)
-        return StreamingResponse(
-            serialize_openai_sse(
-                chunks,
-                response_id=f"chatcmpl-{uuid.uuid4().hex}",
-                created=int(time.time()),
-                model=body.model,
-            ),
-            media_type="text/event-stream",
-        )
+        chunks = await stream_uc.execute(body.model, conversation, tools)
+        return _sse_response(chunks, model=body.model)
 
-    use_case: CreateChatCompletion = request.app.state.create_chat_completion
-    result = await use_case.execute(body.model, conversation)
-
-    return ChatCompletionResponse(
-        id=f"chatcmpl-{uuid.uuid4().hex}",
-        created=int(time.time()),
-        model=result.model_id,
-        choices=[
-            Choice(
-                message=ResponseMessage(content=result.content),
-                finish_reason=result.finish_reason.value,
-            )
-        ],
-        usage=Usage(
-            prompt_tokens=result.usage.prompt_tokens,
-            completion_tokens=result.usage.completion_tokens,
-            total_tokens=result.usage.total_tokens,
-        ),
-    )
+    result = await use_case.execute(body.model, conversation, tools)
+    return _render_completion(result)

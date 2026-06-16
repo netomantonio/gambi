@@ -29,6 +29,9 @@ class ChatMessage(BaseModel):
     # `content` pode ser string ou lista (multimodal). v1 trata só string;
     # partes não-texto são ignoradas na normalização (ver routes_chat).
     content: str | list[dict] | None = None
+    # Mensagens de resultado de ferramenta (role="tool") trazem estes:
+    name: str | None = None
+    tool_call_id: str | None = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -50,9 +53,21 @@ class ChatCompletionRequest(BaseModel):
 # --- /v1/chat/completions (response) ---
 
 
+class ToolCallFunction(BaseModel):
+    name: str
+    arguments: str  # string JSON, como no contrato OpenAI
+
+
+class ResponseToolCall(BaseModel):
+    id: str
+    type: Literal["function"] = "function"
+    function: ToolCallFunction
+
+
 class ResponseMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
-    content: str
+    content: str | None = None
+    tool_calls: list[ResponseToolCall] | None = None
 
 
 class Choice(BaseModel):
