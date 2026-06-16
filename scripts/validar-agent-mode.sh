@@ -84,10 +84,11 @@ chamar () {  # args: <nome_saida> <prompt> <streaming true|false>
   local nome="$1" prompt="$2" streaming="$3" body
   body="$(PROMPT="$prompt" ST="$streaming" python -c 'import os,json;print(json.dumps({"streaming":os.environ["ST"]=="true","user_prompt":os.environ["PROMPT"],"stackspot_knowledge":False,"return_ks_in_response":True}))')"
   echo ">> $nome (streaming=$streaming) -> out_${nome}.txt"
-  curl -sN "$INFER/v1/agent/$AGENT_ID/chat" \
+  curl -sN --max-time 300 "$INFER/v1/agent/$AGENT_ID/chat" \
     -H "Authorization: Bearer $JWT" \
     -H "Content-Type: application/json" \
-    -d "$body" | tee "out_${nome}.txt"
+    -d "$body" \
+    -w $'\n[HTTP %{http_code} | %{size_download} bytes | %{time_total}s]\n' | tee "out_${nome}.txt"
   echo; echo "----------------------------------------------------------------"
 }
 
