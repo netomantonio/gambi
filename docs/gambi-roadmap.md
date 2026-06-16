@@ -56,8 +56,8 @@ Dois princípios que mudam o nível de exigência:
 | C | `knowledge_source_ids` por request → roteamento de grounding | "pergunta sobre módulo X → KS de X" | 1 | Baixo |
 | D | Injetar arquivo atual + diagnostics antes da tool call | Tool-calling aterrado (mais confiável) | 1-2 | Médio |
 | E | Agents especializados + KS como "modelos" (`codebase-expert`, `arch-advisor`) | Variedade útil no `/v1/models` | 0-1 | Baixo |
-| F | `return_ks_in_response` → citações no editor | Confiança/rastreabilidade | 0 | Baixo |
-| G | Repair/retry/validação do structured output no GAMBI | Robustez do agent mode | 0 | Médio |
+| F | `return_ks_in_response` → citações no editor | Confiança/rastreabilidade | 0 | Baixo | ✅ feito |
+| G | Repair/retry/validação do structured output no GAMBI | Robustez do agent mode | 0 | Médio | ✅ feito |
 | H | KS por branch/worktree | Grounding no que se está mexendo | 2 | Médio |
 | I | Indexar `docs/`, ADRs, SPEC/arquitetura | Agent respeita as convenções do time | 1-2 | Baixo |
 | J | GAMBI como MCP server (retrieval do codebase como tool nativa) | Poder a qualquer modelo, sem depender de structured output | 3 | Alto |

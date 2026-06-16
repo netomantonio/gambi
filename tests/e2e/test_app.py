@@ -9,7 +9,14 @@ from gambi.application.use_cases import (
     CreateChatCompletionStream,
     ListModels,
 )
-from gambi.domain.models import AgentReply, AgentStreamEvent, CatalogEntry, UpstreamError, Usage
+from gambi.domain.models import (
+    AgentReply,
+    AgentStreamEvent,
+    CatalogEntry,
+    StackSpotAgentOptions,
+    UpstreamError,
+    Usage,
+)
 
 
 class FakeInvoker:
@@ -182,6 +189,133 @@ def test_agent_mode_tool_call_streaming_emits_tool_calls_sse():
     assert "createFile" in text
     assert '"finish_reason": "tool_calls"' in text
     assert text.strip().endswith("data: [DONE]")
+
+
+class _SequenceInvoker:
+    """Invoker que devolve uma resposta diferente por chamada (p/ testar repair retry)."""
+
+    def __init__(self, replies: list[AgentReply]) -> None:
+        self._replies = replies
+        self.calls = 0
+
+    async def invoke(self, agent_id: str, user_prompt: str, options=None) -> AgentReply:
+        reply = self._replies[min(self.calls, len(self._replies) - 1)]
+        self.calls += 1
+        return reply
+
+
+def _app_with_invoker(invoker) -> TestClient:
+    catalog = ConfigAgentCatalog([CatalogEntry(model_id="stackspot-dev", agent_id="agent-1")])
+    app = create_app(
+        list_models=ListModels(catalog),
+        create_chat_completion=CreateChatCompletion(catalog, invoker),
+        create_chat_completion_stream=CreateChatCompletionStream(catalog, FakeStreamer([])),
+    )
+    return TestClient(app)
+
+
+def _agent_post(client: TestClient):
+    return client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "crie hello.py"}],
+            "tools": [{"type": "function", "function": {"name": "createFile", "parameters": {}}}],
+        },
+    )
+
+
+def test_agent_mode_repair_retry_recovers_tool_call():
+    invoker = _SequenceInvoker(
+        [
+            AgentReply(message="desculpe, segue a resposta", stop_reason="stop"),  # fora do schema
+            AgentReply(message=_TOOL_CALL_JSON, stop_reason="stop"),  # válido após repair
+        ]
+    )
+    resp = _agent_post(_app_with_invoker(invoker))
+    assert resp.status_code == 200
+    assert invoker.calls == 2  # houve um repair retry
+    assert resp.json()["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_agent_mode_repair_gives_up_after_one_retry():
+    invoker = _SequenceInvoker(
+        [
+            AgentReply(message="texto 1", stop_reason="stop"),
+            AgentReply(message="texto 2", stop_reason="stop"),
+            AgentReply(message="texto 3", stop_reason="stop"),  # não deve ser alcançado (cap=1)
+        ]
+    )
+    resp = _agent_post(_app_with_invoker(invoker))
+    assert resp.status_code == 200
+    assert invoker.calls == 2  # 1 original + 1 repair, depois desiste
+    body = resp.json()
+    assert body["choices"][0]["finish_reason"] == "stop"
+    assert body["choices"][0]["message"]["content"] == "texto 2"  # fallback p/ o texto
+
+
+def _app_with_ks_agent(invoker=None, streamer=None) -> TestClient:
+    catalog = ConfigAgentCatalog(
+        [
+            CatalogEntry(
+                model_id="stackspot-dev",
+                agent_id="agent-1",
+                options=StackSpotAgentOptions(return_ks_in_response=True),
+            )
+        ]
+    )
+    app = create_app(
+        list_models=ListModels(catalog),
+        create_chat_completion=CreateChatCompletion(
+            catalog, invoker or FakeInvoker(AgentReply("x", "stop"))
+        ),
+        create_chat_completion_stream=CreateChatCompletionStream(
+            catalog, streamer or FakeStreamer([])
+        ),
+    )
+    return TestClient(app)
+
+
+def test_chat_appends_sources_footer_when_return_ks_on():
+    invoker = FakeInvoker(
+        AgentReply(message="resposta", stop_reason="stop", sources=("ks-a", "ks-b"))
+    )
+    resp = _app_with_ks_agent(invoker=invoker).post(
+        "/v1/chat/completions",
+        json={"model": "stackspot-dev", "messages": [{"role": "user", "content": "oi"}]},
+    )
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert content.startswith("resposta")
+    assert "Fontes:" in content and "ks-a" in content and "ks-b" in content
+
+
+def test_chat_no_footer_when_flag_off():
+    # build_client usa um agent SEM return_ks_in_response → sem rodapé, mesmo com sources.
+    client, _ = build_client(AgentReply(message="resposta", stop_reason="stop", sources=("ks-a",)))
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "stackspot-dev", "messages": [{"role": "user", "content": "oi"}]},
+    )
+    assert "Fontes:" not in resp.json()["choices"][0]["message"]["content"]
+
+
+def test_streaming_appends_sources_footer_when_return_ks_on():
+    streamer = FakeStreamer(
+        [
+            AgentStreamEvent(delta="oi"),
+            AgentStreamEvent(final=True, stop_reason="stop", sources=("ks-a",)),
+        ]
+    )
+    resp = _app_with_ks_agent(streamer=streamer).post(
+        "/v1/chat/completions",
+        json={
+            "model": "stackspot-dev",
+            "messages": [{"role": "user", "content": "oi"}],
+            "stream": True,
+        },
+    )
+    assert "Fontes:" in resp.text and "ks-a" in resp.text
+    assert resp.text.strip().endswith("data: [DONE]")
 
 
 def test_chat_completion_unknown_model_returns_openai_error():

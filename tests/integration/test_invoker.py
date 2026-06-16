@@ -72,6 +72,19 @@ async def test_invoke_sends_per_agent_options_in_payload():
 
 
 @respx.mock
+async def test_invoke_captures_knowledge_sources():
+    respx.post(CHAT_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"message": "ok", "stop_reason": "stop", "knowledge_source_id": ["ks-a", "ks-b"]},
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        reply = await _invoker(client).invoke("agent-1", "x", DEFAULT_OPTS)
+    assert reply.sources == ("ks-a", "ks-b")
+
+
+@respx.mock
 async def test_invoke_404_raises_upstream_not_found():
     respx.post(CHAT_URL).mock(return_value=httpx.Response(404, json={}))
     async with httpx.AsyncClient() as client:

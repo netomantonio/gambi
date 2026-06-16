@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 from gambi.application.ports import AgentCatalogPort, AgentInvokerPort, AgentStreamPort
+from gambi.domain.citations import format_sources_footer
 from gambi.domain.flattener import ConversationFlattener
 from gambi.domain.mapping import FinishReasonMapper, ResponseMapper
 from gambi.domain.models import (
@@ -21,6 +23,14 @@ from gambi.domain.models import (
 from gambi.domain.structured import parse_structured_response
 
 logger = logging.getLogger("gambi.use_cases")
+
+# Quantas vezes reprompt o agent quando ele não respeita o schema (agent mode).
+_MAX_SCHEMA_REPAIRS = 1
+_REPAIR_INSTRUCTION = (
+    "\n\n## CORREÇÃO\n"
+    "Sua resposta anterior NÃO seguiu o schema JSON exigido. "
+    "Responda SOMENTE com o objeto JSON do schema, sem texto fora dele."
+)
 
 
 class ListModels:
@@ -61,16 +71,31 @@ class CreateChatCompletion:
 
         if tools:
             # Agent mode: a resposta vem como JSON do nosso schema → parseia em content/tool_calls.
-            content, tool_calls = parse_structured_response(reply.message)
-            finish = FinishReason.TOOL_CALLS if tool_calls else FinishReason.STOP
+            parsed = parse_structured_response(reply.message)
+            # Robustez: se o agent não respeitou o schema, reprompt uma vez antes do fallback.
+            repairs = 0
+            while not parsed.matched and repairs < _MAX_SCHEMA_REPAIRS:
+                repairs += 1
+                logger.warning("structured output fora do schema; repair retry %d", repairs)
+                reply = await self._invoker.invoke(
+                    entry.agent_id, user_prompt + _REPAIR_INSTRUCTION, entry.options
+                )
+                parsed = parse_structured_response(reply.message)
+            finish = FinishReason.TOOL_CALLS if parsed.tool_calls else FinishReason.STOP
             return ChatResult(
                 model_id=model_id,
-                content=content,
+                content=parsed.content,
                 finish_reason=finish,
                 usage=reply.usage,
-                tool_calls=tool_calls,
+                tool_calls=parsed.tool_calls,
             )
-        return self._mapper.to_chat_result(reply, model_id)
+
+        result = self._mapper.to_chat_result(reply, model_id)
+        # F — citações: anexa rodapé "Fontes" quando o agent opta por return_ks_in_response.
+        if entry.options.return_ks_in_response and reply.sources:
+            footer = format_sources_footer(reply.sources)
+            result = replace(result, content=(result.content or "") + footer)
+        return result
 
 
 class CreateChatCompletionStream:
@@ -109,6 +134,11 @@ class CreateChatCompletionStream:
             if event.delta:
                 yield ChatStreamChunk(model_id=model_id, delta=event.delta)
             if event.final:
+                # F — citações: rodapé "Fontes" antes do chunk final (opt-in).
+                if options.return_ks_in_response and event.sources:
+                    yield ChatStreamChunk(
+                        model_id=model_id, delta=format_sources_footer(event.sources)
+                    )
                 yield ChatStreamChunk(
                     model_id=model_id,
                     finish_reason=self._finish.map(event.stop_reason),

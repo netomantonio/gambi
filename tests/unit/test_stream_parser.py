@@ -31,28 +31,33 @@ def test_compute_delta_cumulative():
 
 
 def test_parse_chunk_plain_text():
-    text, stop, usage, conv = _parse_chunk("pedaço de texto")
+    text, stop, usage, conv, sources = _parse_chunk("pedaço de texto")
     assert text == "pedaço de texto"
     assert stop is None and usage is None and conv is None
+    assert sources == ()
 
 
 def test_parse_chunk_json_message_key():
-    text, stop, usage, conv = _parse_chunk('{"message": "oi", "stop_reason": "stop"}')
+    text, stop, usage, conv, _ = _parse_chunk('{"message": "oi", "stop_reason": "stop"}')
     assert text == "oi"
     assert stop == "stop"
 
 
 def test_parse_chunk_json_openai_style_delta():
-    text, _, _, _ = _parse_chunk('{"choices": [{"delta": {"content": "abc"}}]}')
+    text, *_ = _parse_chunk('{"choices": [{"delta": {"content": "abc"}}]}')
     assert text == "abc"
 
 
 def test_parse_chunk_final_metadata():
-    payload = '{"conversation_id": "01K9", "tokens": {"user": 3, "enrichment": 2, "output": 5}}'
-    text, stop, usage, conv = _parse_chunk(payload)
+    payload = (
+        '{"conversation_id": "01K9", "tokens": {"user": 3, "enrichment": 2, "output": 5}, '
+        '"knowledge_source_id": ["ks-a"]}'
+    )
+    text, stop, usage, conv, sources = _parse_chunk(payload)
     assert conv == "01K9"
     assert usage.prompt_tokens == 5  # input ausente → user + enrichment
     assert usage.completion_tokens == 5
+    assert sources == ("ks-a",)
 
 
 def test_extract_text_prefers_known_keys():

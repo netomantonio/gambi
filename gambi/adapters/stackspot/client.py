@@ -10,6 +10,7 @@ import httpx
 
 from gambi.adapters.stackspot.request_payload import build_payload
 from gambi.adapters.stackspot.schemas_stackspot import StackSpotChatResponse
+from gambi.adapters.stackspot.sources import extract_sources
 from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
 from gambi.domain.models import AgentReply, StackSpotAgentOptions, UpstreamError
@@ -58,4 +59,5 @@ class StackSpotAgentInvoker:
             message=parsed.message,
             stop_reason=parsed.stop_reason,
             usage=usage_from_tokens(parsed.tokens),
+            sources=extract_sources(parsed.knowledge_source_id, parsed.source),
         )

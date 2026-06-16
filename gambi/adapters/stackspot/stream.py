@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from gambi.adapters.stackspot.request_payload import build_payload
+from gambi.adapters.stackspot.sources import extract_sources
 from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
 from gambi.domain.models import AgentStreamEvent, StackSpotAgentOptions, UpstreamError, Usage
@@ -82,6 +83,7 @@ class StackSpotAgentStreamer:
         final_stop: str | None = None
         final_usage: Usage | None = None
         final_conv: str | None = None
+        final_sources: tuple[str, ...] = ()
         saw_frame = False
         emitted = False
         buffer: list[str] = []  # só p/ o fallback de JSON único (enquanto não há frames)
@@ -99,13 +101,15 @@ class StackSpotAgentStreamer:
             payload = line[5:].strip()
             if payload == "[DONE]":
                 break
-            text, stop, usage, conv = _parse_chunk(payload)
+            text, stop, usage, conv, sources = _parse_chunk(payload)
             if stop is not None:
                 final_stop = stop
             if usage is not None:
                 final_usage = usage
             if conv is not None:
                 final_conv = conv
+            if sources:
+                final_sources = sources
             if text:
                 delta, acc = _compute_delta(text, acc)
                 if delta:
@@ -123,7 +127,11 @@ class StackSpotAgentStreamer:
                 "SSE sem conteúdo extraído — formato inesperado. Prévia: %r", buffer[:10]
             )
         yield AgentStreamEvent(
-            final=True, stop_reason=final_stop, usage=final_usage, conversation_id=final_conv
+            final=True,
+            stop_reason=final_stop,
+            usage=final_usage,
+            conversation_id=final_conv,
+            sources=final_sources,
         )
 
     async def _emit_single_body(self, raw: str) -> AsyncIterator[AgentStreamEvent]:
@@ -140,10 +148,12 @@ class StackSpotAgentStreamer:
             yield AgentStreamEvent(delta=raw)
             yield AgentStreamEvent(final=True)
             return
-        text, stop, usage, conv = _parse_chunk_obj(data)
+        text, stop, usage, conv, sources = _parse_chunk_obj(data)
         if text:
             yield AgentStreamEvent(delta=text)
-        yield AgentStreamEvent(final=True, stop_reason=stop, usage=usage, conversation_id=conv)
+        yield AgentStreamEvent(
+            final=True, stop_reason=stop, usage=usage, conversation_id=conv, sources=sources
+        )
 
 
 def _compute_delta(text: str, acc: str) -> tuple[str, str]:
@@ -153,22 +163,27 @@ def _compute_delta(text: str, acc: str) -> tuple[str, str]:
     return text, acc + text  # incremental → o próprio chunk
 
 
-def _parse_chunk(payload: str) -> tuple[str | None, str | None, Usage | None, str | None]:
+def _parse_chunk(
+    payload: str,
+) -> tuple[str | None, str | None, Usage | None, str | None, tuple[str, ...]]:
     try:
         obj = json.loads(payload)
     except (ValueError, TypeError):
-        return payload, None, None, None  # texto puro
+        return payload, None, None, None, ()  # texto puro
     if not isinstance(obj, dict):
-        return str(obj), None, None, None
+        return str(obj), None, None, None, ()
     return _parse_chunk_obj(obj)
 
 
-def _parse_chunk_obj(obj: dict) -> tuple[str | None, str | None, Usage | None, str | None]:
+def _parse_chunk_obj(
+    obj: dict,
+) -> tuple[str | None, str | None, Usage | None, str | None, tuple[str, ...]]:
     text = _extract_text(obj)
     stop = obj.get("stop_reason")
     usage = usage_from_tokens(obj.get("tokens")) if obj.get("tokens") is not None else None
     conv = obj.get("conversation_id")
-    return text, stop, usage, conv
+    sources = extract_sources(obj.get("knowledge_source_id"), obj.get("source"))
+    return text, stop, usage, conv, sources
 
 
 def _extract_text(obj: dict) -> str | None:

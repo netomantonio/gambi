@@ -68,6 +68,7 @@ class AgentReply:
     message: str
     stop_reason: str | None
     usage: Usage = field(default_factory=lambda: Usage(0, 0))
+    sources: tuple[str, ...] = ()  # Knowledge Sources usadas (quando return_ks_in_response)
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ class AgentStreamEvent:
     stop_reason: str | None = None
     usage: Usage | None = None
     conversation_id: str | None = None
+    sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

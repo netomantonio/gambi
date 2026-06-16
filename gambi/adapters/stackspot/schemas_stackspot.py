@@ -17,3 +17,5 @@ class StackSpotChatResponse(BaseModel):
     stop_reason: str | None = None
     tokens: dict | None = None
     conversation_id: str | None = None
+    knowledge_source_id: list | None = None
+    source: list | None = None

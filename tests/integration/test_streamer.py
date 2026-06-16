@@ -79,3 +79,10 @@ async def test_sse_with_done_terminator():
     body = b'data: {"message": "oi", "stop_reason": "stop"}\n\ndata: [DONE]\n\n'
     deltas, finals = await _collect(body)
     assert "".join(deltas) == "oi"
+
+
+@respx.mock
+async def test_sse_captures_sources_in_final_event():
+    body = b'data: {"message": "oi", "stop_reason": "stop", "knowledge_source_id": ["ks-a"]}\n\n'
+    _, finals = await _collect(body)
+    assert finals[-1].sources == ("ks-a",)

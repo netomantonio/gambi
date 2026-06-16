@@ -12,26 +12,43 @@ cai no fallback e devolve o texto como conteúdo — agent mode degrada para res
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from gambi.domain.models import ToolCall
 
 
-def parse_structured_response(message: str) -> tuple[str | None, tuple[ToolCall, ...]]:
-    """Retorna (content, tool_calls). content=None quando há tool_calls."""
+@dataclass(frozen=True)
+class StructuredParse:
+    """Resultado do parse da saída estruturada.
+
+    `matched` indica se a resposta seguiu o nosso schema (tinha `action`). Quando False,
+    `content` é o texto cru (fallback) — sinal de que vale um repair retry no agent mode.
+    """
+
+    content: str | None
+    tool_calls: tuple[ToolCall, ...]
+    matched: bool
+
+
+def parse_structured_response(message: str) -> StructuredParse:
     try:
         data = json.loads(message)
     except (ValueError, TypeError):
-        return message, ()  # não é JSON → texto puro
+        return StructuredParse(content=message, tool_calls=(), matched=False)  # não é JSON
     if not isinstance(data, dict) or "action" not in data:
-        return message, ()  # não é o nosso schema → texto puro
+        return StructuredParse(
+            content=message, tool_calls=(), matched=False
+        )  # não é o nosso schema
 
     if data.get("action") == "tool_call":
         calls = _extract_tool_calls(data.get("tool_calls"))
         if calls:
-            return None, calls
+            return StructuredParse(content=None, tool_calls=calls, matched=True)
 
     content = data.get("content")
-    return (content if isinstance(content, str) else ""), ()
+    return StructuredParse(
+        content=content if isinstance(content, str) else "", tool_calls=(), matched=True
+    )
 
 
 def _extract_tool_calls(raw: object) -> tuple[ToolCall, ...]:
