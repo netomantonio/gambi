@@ -46,10 +46,10 @@ Dois hosts distintos aparecem na doc do StackSpot:
 - **OQ-3/OQ-4 — seleção de agent:** `model` → `agentId` via catálogo config (sem API de listagem); alias por modo.
 - **OQ-5 — realm/token:** `realm` = slug da conta; TTL 1200s (prioriza `expires_in`).
 - **OQ-8 — detecção de modo:** 2-vias (sem tools=ask / com tools=agent); edit↔agent indistinguíveis (aceito).
+- **A2 — agent mode ponta-a-ponta:** captura real confirmou `action=tool_call` (e `final`); `arguments_json` é string JSON. Agent mode validado.
 - **tokens:** prompt em `input`, `user`/`enrichment` podem ser null.
 
 **⏳ Ainda abertas (validar no corp env / fora do v1):**
-- **A2 — emissão de `action=tool_call`:** só validamos `action=final`; falta capturar um tool_call real. → [08](08-gaps-pesquisa.md) OQ-7.
 - **OQ-6 — valores de `stop_reason`** além de `stop` (mapeamento defensivo por ora).
 - **Multi-turno server-side** via `conversation_id` (v1 é stateless). → [02](02-agents-api.md).
 - **Formato de erros** do StackSpot (status/corpo) — mapeamos defensivamente para o envelope OpenAI.

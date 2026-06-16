@@ -165,16 +165,13 @@ exatamente assim, para o agent saber parsear:
   Assim `ask` aponta para um agent de chat e `agent` para este agent estruturado.
 
 ## 4. Validação (OQ-7)
-- ✅ **Resolvido (captura 2026-06-15):** o JSON volta no campo **`message` como string**; no streaming o
-  StackSpot **fragmenta o JSON char-a-char** (por isso o GAMBI chama não-streaming em modo estruturado).
+- ✅ **Resolvido (capturas 2026-06-15/16):** o JSON volta no campo **`message` como string**; no streaming
+  o StackSpot **fragmenta o JSON char-a-char** (por isso o GAMBI chama não-streaming em modo estruturado).
   Tokens (`input`/`output`) e `stop_reason` conforme esperado.
-- ⏳ **Falta validar (A2): emissão de `action=tool_call`.** A captura só exercitou `action=final` (o input
-  já trazia RESULTADOS). Re-rode SÓ com FERRAMENTAS + CONVERSA (sem RESULTADOS) e confirme `tool_call`:
-   ```bash
-   curl -sN ".../v1/agent/<id-do-agent-structured>/chat" -H "Authorization: Bearer $JWT" \
-     -H "Content-Type: application/json" \
-     -d '{"streaming": false, "user_prompt": "## FERRAMENTAS DISPONÍVEIS\n- nome: createFile ...\n\n## CONVERSA\n[Usuário] crie hello.py", "stackspot_knowledge": false}'
-   ```
+- ✅ **A2 RESOLVIDO:** confirmada a emissão de **`action=tool_call`** (sem RESULTADOS no input):
+  `{"action":"tool_call","tool_calls":[{"name":"createFile","arguments_json":"{\"path\":\"hello.py\",...}"}],"content":""}`.
+  `arguments_json` é string JSON → mapeia direto pro `tool_calls[].function.arguments`. `action=final` idem.
+  Validação reproduzível em `scripts/validar-agent-mode.sh`; regressão em `tests/unit/test_structured.py`.
 
 ## 5. A metade em código do GAMBI — ✅ IMPLEMENTADA (2026-06-15)
 Já está no código:

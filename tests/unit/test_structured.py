@@ -1,3 +1,5 @@
+import json
+
 from gambi.domain.structured import parse_structured_response
 
 
@@ -40,3 +42,37 @@ def test_parse_tool_call_tolerates_object_arguments():
     p = parse_structured_response(msg)
     assert p.tool_calls[0].name == "x"
     assert "1" in p.tool_calls[0].arguments_json  # objeto foi serializado para string JSON
+
+
+# --- Regressão: formato REAL capturado do StackSpot (agent estruturado, 2026-06-16) ---
+
+
+def test_parse_real_stackspot_tool_call_payload():
+    # `arguments_json` é uma STRING JSON (como o StackSpot devolve de verdade).
+    args = json.dumps({"path": "hello.py", "content": "print('olá')"})
+    message = json.dumps(
+        {
+            "action": "tool_call",
+            "tool_calls": [{"name": "createFile", "arguments_json": args}],
+            "content": "",
+        }
+    )
+    p = parse_structured_response(message)
+    assert p.matched is True
+    assert p.content is None
+    assert p.tool_calls[0].name == "createFile"
+    # round-trip: o arguments_json é parseável de volta ao objeto que o VS Code executaria
+    assert json.loads(p.tool_calls[0].arguments_json) == {
+        "path": "hello.py",
+        "content": "print('olá')",
+    }
+
+
+def test_parse_real_stackspot_final_payload():
+    message = json.dumps(
+        {"action": "final", "content": "O arquivo `hello.py` foi criado.", "tool_calls": []}
+    )
+    p = parse_structured_response(message)
+    assert p.matched is True
+    assert p.content == "O arquivo `hello.py` foi criado."
+    assert p.tool_calls == ()

@@ -108,10 +108,12 @@ no formato de um JSON Schema definido pelo usuário. **Captura real contra o nos
    (incremental). Por isso o GAMBI, em modo estruturado/agent mode, chama o StackSpot **não-streaming**
    (precisa do JSON inteiro p/ parsear) e re-emite ao VS Code como SSE/JSON.
 
-> **Gap remanescente (validar — A2):** a captura só exercitou `action=final` (o input já trazia
-> `## RESULTADOS DAS FERRAMENTAS` pronto). **Falta validar a emissão de `action=tool_call`** — re-rodar
-> o agent estruturado SÓ com FERRAMENTAS + CONVERSA (sem RESULTADOS) e confirmar que vem
-> `action=tool_call` com `createFile` + `arguments_json`.
+> **A2 — ✅ RESOLVIDO (captura 2026-06-16):** o agent estruturado, recebendo só FERRAMENTAS + CONVERSA
+> (sem RESULTADOS), emitiu `message` = `{"action":"tool_call","tool_calls":[{"name":"createFile",
+> "arguments_json":"{\"path\":\"hello.py\",\"content\":\"print('olá')\"}"}],"content":""}`. Ou seja,
+> `arguments_json` vem como **string JSON** (mapeia direto p/ `tool_calls[].function.arguments` da OpenAI).
+> `action=final` também confirmado. O `parse_structured_response` do GAMBI consome os dois sem mudança;
+> travado em `tests/unit/test_structured.py` (testes de regressão com o payload real).
 
 > **Status do código (2026-06-15):** GAMBI implementa entrada (contrato de prompt) e saída
 > (parse `message`→`tool_calls`/content, fallback p/ texto). A flag por-agent **`structured_output`**
