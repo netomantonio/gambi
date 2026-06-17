@@ -39,6 +39,7 @@ _METADATA_FIELDS = (
     "upstream_latency_ms",
     "outcome",
     "error_type",
+    "error_detail",
 )
 
 # Corpos: só sob flag (privacidade em camadas).

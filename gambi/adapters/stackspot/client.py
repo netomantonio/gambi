@@ -60,7 +60,12 @@ class StackSpotAgentInvoker:
                 json=build_payload(user_prompt=user_prompt, streaming=False, options=options),
             )
         except httpx.HTTPError as exc:
-            enrich(upstream_latency_ms=round((time.perf_counter() - start) * 1000, 3))
+            # Sem resposta HTTP (timeout de leitura, conexão derrubada pelo gateway, TLS...).
+            # error_detail = classe+msg do httpx → distingue ReadTimeout de servidor-desconectou.
+            enrich(
+                upstream_latency_ms=round((time.perf_counter() - start) * 1000, 3),
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
             raise UpstreamError(f"falha ao contatar o StackSpot: {exc}") from exc
 
         enrich(

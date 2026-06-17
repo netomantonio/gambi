@@ -29,3 +29,19 @@ def configure_logging(level: str | None = None) -> None:
         events_handler.setFormatter(logging.Formatter("%(message)s"))
         events.addHandler(events_handler)
     events.propagate = False
+
+    # GAMBI_LOG_FILE: captura confiável em arquivo (sem depender de pipe do shell — no Windows,
+    # `2>&1 | Tee` no PowerShell 5.1 estraga as linhas). Wide events vão crus; diagnósticos
+    # `gambi.*` vão com prefixo. Ambos no MESMO arquivo (append).
+    log_file = os.environ.get("GAMBI_LOG_FILE", "").strip()
+    if log_file:
+        if not any(isinstance(h, logging.FileHandler) for h in events.handlers):
+            events_file = logging.FileHandler(log_file, encoding="utf-8")
+            events_file.setFormatter(logging.Formatter("%(message)s"))
+            events.addHandler(events_file)
+        if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+            gambi_file = logging.FileHandler(log_file, encoding="utf-8")
+            gambi_file.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+            )
+            logger.addHandler(gambi_file)

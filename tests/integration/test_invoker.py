@@ -123,6 +123,26 @@ async def test_invoke_error_enriches_wide_event_status_and_latency():
 
 
 @respx.mock
+async def test_invoke_transport_error_enriches_error_detail():
+    # Sem resposta HTTP (ex.: gateway derruba a conexão / read timeout): sem upstream_status,
+    # mas com error_detail dizendo a classe do erro de transporte.
+    from gambi.observability.wide_event import WideEvent, bind_event, reset_event
+
+    respx.post(CHAT_URL).mock(side_effect=httpx.ReadTimeout("timed out"))
+    event = WideEvent(request_id="r1")
+    token = bind_event(event)
+    try:
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(UpstreamError):
+                await _invoker(client).invoke("agent-1", "x", DEFAULT_OPTS)
+    finally:
+        reset_event(token)
+    assert event.upstream_status is None
+    assert event.upstream_latency_ms is not None
+    assert event.error_detail and "ReadTimeout" in event.error_detail
+
+
+@respx.mock
 async def test_invoke_error_captures_body_under_bodies_flag():
     from gambi.observability.config import ObservabilityConfig
     from gambi.observability.wide_event import WideEvent, bind_event, reset_event

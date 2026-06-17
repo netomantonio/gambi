@@ -45,6 +45,7 @@ class WideEvent:
     # desfecho
     outcome: str | None = None  # success | upstream_error | ... | internal_error
     error_type: str | None = None
+    error_detail: str | None = None  # detalhe da exceção (ex.: classe+msg do erro de transporte)
     # corpos (só coletados sob flag — privacidade em camadas)
     upstream_request_body: str | None = None
     upstream_error_body: str | None = None

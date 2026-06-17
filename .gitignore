@@ -23,3 +23,6 @@ htmlcov/
 .env
 .env.*
 !.env.example
+
+# --- Logs (wide events com GAMBI_LOG_BODIES/RAW podem conter corpos/código — nunca commitar) ---
+*.log

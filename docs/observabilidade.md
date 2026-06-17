@@ -24,6 +24,7 @@ Barato por padrão: sem flags, só metadados (nenhum corpo, nenhum custo de copi
 | `GAMBI_LOG_BODIES` | *(off)* | `1`/`true` → inclui `upstream_request_body` e `upstream_error_body`, **truncados + redacted**. |
 | `GAMBI_LOG_RAW` | *(off)* | `1`/`true` → inclui corpos **crus** (sem corte, **sem redaction**). Só p/ debug local. Implica bodies. |
 | `GAMBI_LOG_MAX_BODY` | `2000` | Limite de chars no truncamento dos corpos (modo `bodies`). |
+| `GAMBI_LOG_FILE` | *(off)* | Caminho de arquivo. O GAMBI escreve os wide events (crus) **e** os diagnósticos `gambi.*` nele (append), sem depender de pipe do shell. |
 | `GAMBI_LOG_LEVEL` | `INFO` | Nível dos logs `gambi.*` (diagnóstico geral). O logger de eventos `gambi.events` é sempre `INFO`. |
 
 **Privacidade (piso, vale até em `raw`):** o header `Authorization`/Bearer e o `client_secret`
@@ -32,14 +33,27 @@ mascarados como `***`.
 
 ## Como rodar com observabilidade ligada
 
+Adicione ao seu `.env` (já carregado via `--env-file .env`) e rode normalmente:
+
+```dotenv
+GAMBI_LOG_FORMAT=json
+GAMBI_LOG_BODIES=1
+GAMBI_LOG_MAX_BODY=8000
+GAMBI_LOG_LEVEL=DEBUG
+GAMBI_LOG_FILE=gambi-debug.log
+```
 ```bash
-# diagnóstico do 502: JSON + corpos do upstream (redacted) — o combo que você quer p/ investigar
-GAMBI_LOG_FORMAT=json GAMBI_LOG_BODIES=1 \
-  uv run uvicorn gambi.main:app --env-file .env --reload
+uv run uvicorn gambi.main:app --env-file .env --reload
 ```
 
-No VS Code, reproduza o caso que falha (agent/plan mode usando uma tool). No terminal do uvicorn sai
-**uma linha por request**. A do turno que deu 502 responde a pergunta.
+No VS Code, reproduza o caso que falha (agent/plan mode usando uma tool). Sai **uma linha por
+request** — no terminal do uvicorn **e** no `gambi-debug.log` (graças ao `GAMBI_LOG_FILE`; não precisa
+de `Tee`/`2>&1`, que no PowerShell 5.1 estragam as linhas de executável nativo). Depois ache a do
+turno que falhou:
+
+```powershell
+Select-String -Path gambi-debug.log -Pattern 'upstream_error'
+```
 
 ## Como ler — receita de diagnóstico
 
@@ -84,6 +98,7 @@ Resumido aqui; a tabela completa (campo → camada de origem → nível de verbo
 `request_id`, `method`, `path`, `http_status`, `duration_ms`, `model`, `mode`, `stream`,
 `n_messages`, `n_tools`, `n_tool_results`, `tool_names`, `agent_id`, `agent_action`, `schema_repairs`,
 `prompt_chars`, `upstream_url`, `upstream_status`, `upstream_latency_ms`, `outcome`, `error_type`,
+`error_detail` (classe+msg da exceção de transporte: distingue read-timeout de "servidor desconectou"),
 e — só sob flag — `upstream_request_body`, `upstream_error_body`.
 
 ## "Agent/plan mode não usa stream? Por que não-streaming?"
@@ -112,7 +127,7 @@ uv run pytest tests/unit/test_wide_event.py tests/unit/test_emit.py \
               tests/unit/test_redaction.py tests/unit/test_observability_config.py \
               tests/integration/test_wide_event_middleware.py \
               tests/e2e/test_wide_event_e2e.py -q
-uv run pytest        # suíte inteira (94 testes)
+uv run pytest        # suíte inteira (95 testes)
 ```
 
 O teste-âncora de CAP-6 é
