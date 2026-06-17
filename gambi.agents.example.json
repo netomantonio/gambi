@@ -1,29 +1,14 @@
 [
   {
-    "model_id": "stackspot-dev",
-    "agent_id": "COLE_O_AGENT_ID_AQUI",
-    "stackspot_knowledge": false,
-    "deep_search_ks": false,
-    "return_ks_in_response": false,
-    "knowledge_source_ids": [],
-    "agent_version_number": 1
-  },
-  {
-    "model_id": "stackspot-arch",
-    "agent_id": "OUTRO_AGENT_ID"
-  },
-  {
-    "model_id": "stackspot-dev-agent",
-    "agent_id": "AGENT_ID_COM_STRUCTURED_OUTPUT",
-    "structured_output": true,
-    "comment": "agent de AGENT MODE (Structured Output + system prompt; ver docs/stackspot-agent-mode-setup.md)"
-  },
-  {
-    "comment": "ALIAS: exporta só 'stackspot-llm-5.1' no VS Code; roteia por modo (sem tools=ask, com tools=agent/edit)",
     "model_id": "stackspot-llm-5.1",
     "modes": {
-      "ask": { "agent_id": "AGENT_ID_DE_CHAT", "stackspot_knowledge": true },
-      "agent": { "agent_id": "AGENT_ID_ESTRUTURADO", "structured_output": true }
+      "ask":   { "agent_id": "ID_DO_AGENT_DE_CHAT" },
+      "agent": { "agent_id": "ID_DO_AGENT_ESTRUTURADO", "structured_output": true }
     }
+  },
+
+  {
+    "model_id": "stackspot-dev",
+    "agent_id": "ID_DE_UM_AGENT_SIMPLES"
   }
 ]

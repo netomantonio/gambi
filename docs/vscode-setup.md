@@ -6,7 +6,7 @@ Guia para usar o GAMBI como **provider de modelos** no VS Code Copilot Chat — 
 
 ## Pré-requisitos
 - GAMBI rodando (ver `README.md`): `uv run uvicorn gambi.main:app` com `GAMBI_AGENTS` apontando para os agents.
-- VS Code (Insiders, enquanto o Custom Endpoint não chega ao estável).
+- **VS Code ≥ 1.120** (onde o provider "Custom Endpoint" estabilizou) + extensão **GitHub Copilot Chat** atualizada. ⚠️ Confirmado: **1.117 NÃO tem** "Custom Endpoint" no menu — só OpenAI/OpenRouter/etc. Se não aparecer a opção, **atualize o VS Code** (e a extensão; considere a pre-release). Ref.: microsoft/vscode#317939.
 
 ## Passos
 1. No VS Code, abra a paleta de comandos e rode **`Chat: Manage Language Models`**.
@@ -43,3 +43,16 @@ vira texto normal (não quebra), apenas sem edição autônoma de arquivos.
 - Agent mode é **experimental** até validar o Structured Output contra a API real (OQ-7).
 - Sem code completions inline (exigem conta GitHub — fora do escopo).
 - Multimodal/anexos fora do v1.
+
+## Troubleshooting (armadilhas reais já enfrentadas)
+
+**Não aparece "Custom Endpoint" no menu Add Models (só OpenAI/Anthropic/Gemini/OpenRouter/Ollama).**
+→ VS Code antigo demais. O provider estabilizou na **≥ 1.120**; **1.117 não tem**. Atualize o VS Code (e a extensão GitHub Copilot Chat; considere a pre-release). Sem essa opção, **não há como** apontar o Copilot Chat pro GAMBI. Ref.: microsoft/vscode#317939.
+
+**Você seleciona "OpenAI" e nada funciona / aparece `Error fetching available OpenRouter models`.**
+→ Provider errado. O **"OpenAI"** fala com `api.openai.com` (só pede API key, **sem campo de URL**) e ignora qualquer URL custom → nunca chama o localhost. O erro do **OpenRouter** é de OUTRO provider (refresh de catálogo) — ruído, pode remover. Use **"Custom Endpoint"** (pede **URL + model id**). Regra: se a tela só pede API key → provider errado; se pede **URL** → certo.
+
+**`net::ERR_TUNNEL_CONNECTION_FAILED`.**
+→ Proxy corporativo: o VS Code (Chromium) está mandando a chamada de `localhost` pelo proxy. Adicione no settings.json: `"http.noProxy": ["localhost", "127.0.0.1", "::1"]`, recarregue a janela e re-adicione o modelo. (O `curl` funciona porque tem bypass próprio; o VS Code usa o proxy dele.)
+
+**Teste definitivo de que está no provider certo:** ao mandar mensagem no chat, o **log do GAMBI** mostra `POST /v1/chat/completions`. Se não chega request nenhuma no log → você ainda está no provider errado (ou sem a opção Custom Endpoint).
