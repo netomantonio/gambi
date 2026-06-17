@@ -16,7 +16,9 @@ from fastapi.testclient import TestClient
 
 from gambi.adapters.catalog.config_catalog import ConfigAgentCatalog
 from gambi.adapters.http.app import create_app
+from gambi.adapters.stackspot.buffered import BufferedAgentStreamInvoker
 from gambi.adapters.stackspot.client import StackSpotAgentInvoker
+from gambi.adapters.stackspot.stream import StackSpotAgentStreamer
 from gambi.application.use_cases import (
     CreateChatCompletion,
     CreateChatCompletionStream,
@@ -137,6 +139,82 @@ def test_upstream_4xx_event_diagnoses_stackspot_not_gambi(caplog):
     assert ev["upstream_status"] == 429
     assert ev["outcome"] == "upstream_error"
     assert ev["http_status"] == 502
+    assert "Credit Limit Reached" in ev["upstream_error_body"]
+
+
+def _build_streaming(observability: ObservabilityConfig, options=None) -> TestClient:
+    """App com o wiring REAL de produção: agent mode via streaming + acumulação."""
+    catalog = ConfigAgentCatalog([_route(options)])
+    streamer = StackSpotAgentStreamer(
+        client=httpx.AsyncClient(), token_provider=_FixedToken(), observability=observability
+    )
+    invoker = BufferedAgentStreamInvoker(streamer)
+    app = create_app(
+        catalog=catalog,
+        list_models=ListModels(catalog),
+        create_chat_completion=CreateChatCompletion(catalog, invoker),
+        create_chat_completion_stream=CreateChatCompletionStream(catalog, streamer),
+        observability=observability,
+    )
+    return TestClient(app)
+
+
+@respx.mock
+def test_agent_mode_via_streaming_emits_tool_call(caplog):
+    # Wiring de produção: agent mode chama o StackSpot em streaming, acumula o JSON e emite
+    # tool_calls — sem esbarrar no teto de ~120s do gateway.
+    frame = json.dumps({"message": _TOOL_CALL_JSON, "stop_reason": "stop"})
+    body = (f"data: {frame}\n\n").encode()
+    respx.post(CHAT_URL).mock(
+        return_value=httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=body
+        )
+    )
+    client = _build_streaming(
+        ObservabilityConfig(log_format="json"),
+        options=StackSpotAgentOptions(structured_output=True),
+    )
+    with caplog.at_level(logging.INFO, logger="gambi.events"):
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "stackspot-dev",
+                "messages": [{"role": "user", "content": "crie hello.py"}],
+                "tools": [
+                    {"type": "function", "function": {"name": "createFile", "parameters": {}}}
+                ],
+                "stream": True,
+            },
+        )
+    assert resp.status_code == 200
+    assert '"tool_calls"' in resp.text and "createFile" in resp.text
+    ev = _events(caplog)[-1]
+    assert ev["mode"] == "agent"
+    assert ev["agent_action"] == "tool_call"
+    assert ev["upstream_status"] == 200
+    assert ev["outcome"] == "success"
+
+
+@respx.mock
+def test_agent_mode_streaming_upstream_error_diagnoses(caplog):
+    # Mesmo no caminho streaming, um ≥400 do StackSpot vira 502 + evento com upstream_status.
+    respx.post(CHAT_URL).mock(
+        return_value=httpx.Response(429, text='{"message":"Credit Limit Reached"}')
+    )
+    client = _build_streaming(ObservabilityConfig(log_format="json", log_bodies=True))
+    with caplog.at_level(logging.INFO, logger="gambi.events"):
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "stackspot-dev",
+                "messages": [{"role": "user", "content": "oi"}],
+                "tools": [{"type": "function", "function": {"name": "x", "parameters": {}}}],
+            },
+        )
+    assert resp.status_code == 502
+    ev = _events(caplog)[-1]
+    assert ev["upstream_status"] == 429
+    assert ev["outcome"] == "upstream_error"
     assert "Credit Limit Reached" in ev["upstream_error_body"]
 
 

@@ -16,8 +16,7 @@ def test_gambi_log_file_captures_wide_events(tmp_path, monkeypatch):
     # snapshot do estado global (handlers + propagate) p/ restaurar — configure_logging muta
     # loggers globais e não pode vazar p/ outros testes (ex.: caplog em test_emit).
     snapshot = [
-        (logger, list(logger.handlers), logger.propagate, logger.level)
-        for logger in (events, base)
+        (logger, list(logger.handlers), logger.propagate, logger.level) for logger in (events, base)
     ]
     try:
         configure_logging()

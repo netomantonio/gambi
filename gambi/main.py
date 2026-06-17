@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from gambi.adapters.catalog.config_catalog import ConfigAgentCatalog
 from gambi.adapters.http.app import create_app
 from gambi.adapters.stackspot.auth import StackSpotTokenProvider
-from gambi.adapters.stackspot.client import StackSpotAgentInvoker
+from gambi.adapters.stackspot.buffered import BufferedAgentStreamInvoker
 from gambi.adapters.stackspot.stream import StackSpotAgentStreamer
 from gambi.application.use_cases import (
     CreateChatCompletion,
@@ -39,10 +39,12 @@ def build_app(settings: Settings | None = None):
         client_id=settings.client_id,
         client_secret=settings.client_secret,
     )
-    invoker = StackSpotAgentInvoker(
+    # Agent mode chama o StackSpot em streaming e acumula a resposta — evita o teto de ~120s
+    # do gateway para respostas não-streaming (que derruba turnos agênticos longos com 502).
+    streamer = StackSpotAgentStreamer(
         client=http_client, token_provider=token_provider, observability=observability
     )
-    streamer = StackSpotAgentStreamer(client=http_client, token_provider=token_provider)
+    invoker = BufferedAgentStreamInvoker(streamer)
     catalog = ConfigAgentCatalog(settings.agents)
 
     @asynccontextmanager

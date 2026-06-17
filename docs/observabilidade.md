@@ -101,24 +101,31 @@ Resumido aqui; a tabela completa (campo → camada de origem → nível de verbo
 `error_detail` (classe+msg da exceção de transporte: distingue read-timeout de "servidor desconectou"),
 e — só sob flag — `upstream_request_body`, `upstream_error_body`.
 
-## "Agent/plan mode não usa stream? Por que não-streaming?"
+## Agent/plan mode e streaming no upstream (por que mudou)
 
-Usa, **para o cliente**: o VS Code sempre manda `stream:true` e **continua recebendo SSE** do GAMBI.
-O que é não-streaming é a chamada **ao StackSpot** (upstream), e só em **agent mode**:
+Tanto para o cliente quanto para o StackSpot, **agent mode agora usa streaming**.
 
-- **ask mode** (sem tools): GAMBI faz streaming upstream → repassa deltas como SSE. Streaming ponta a ponta.
-- **agent mode** (com tools, ou agent com `structured_output`): o agent responde um **JSON do nosso
-  schema** (`{"action":"tool_call"|"final", ...}`). Esse JSON precisa ser lido **inteiro** para decidir
-  se vira `tool_calls` ou conteúdo, e para parsear a lista de tool calls. Por isso o GAMBI **bufferiza
-  o upstream** (não-stream), parseia, e **só então** emite SSE limpo ao editor. Se repassássemos o
-  stream cru, vazaria fragmento de JSON (`"action"...`) no chat — há testes que proíbem isso.
+**Motivo (medido, 2026-06-17):** o StackSpot tem um **teto de ~120s para resposta NÃO-streaming** —
+o gateway derruba a conexão com `RemoteProtocolError: Server disconnected without sending a response`.
+Dois wide events provaram isso no mesmo turno pesado (prompt ~80KB, 25 tools):
+- timeout nosso em 60s → `error_detail=ReadTimeout` (nós cortamos);
+- timeout nosso em 200s → falha em ~122s com `error_detail=RemoteProtocolError: Server disconnected…`
+  (o **gateway** cortou). Subir o timeout só troca quem corta.
 
-Dá pra manter stream também no upstream do agent mode? Em tese sim, mas o ganho é pequeno: uma
-`tool_call` só pode ser emitida depois do JSON completo de qualquer forma. O único caso que se
-beneficiaria é a **resposta final em texto** (`action:"final"`), que poderia sair token a token.
-Isso depende do formato do SSE do StackSpot (**OQ-1**, não documentado) e da emissão de evento em
-falha parcial de stream (**OQ-7**) — ficou fora do v1. Bônus do buffer atual: o erro do agent mode
-sai **limpo**, o que é exatamente o que deixa o wide event diagnosticar o 502.
+**Fix:** em agent mode o GAMBI chama o StackSpot em `streaming:True` (a conexão fica viva enquanto os
+tokens fluem, fugindo do teto) e **acumula** os deltas no GAMBI até ter a mensagem inteira; só então
+parseia o structured output (`{"action":"tool_call"|"final", ...}`) e emite SSE limpo ao editor.
+Nada de JSON cru vaza no chat (acumulamos antes de parsear). Implementado em
+`gambi/adapters/stackspot/buffered.py` (`BufferedAgentStreamInvoker`), reusando o streamer.
+
+- **ask mode** (sem tools): já era streaming ponta a ponta.
+- **agent mode** (tools/`structured_output`): agora **streaming + acumulação** no upstream.
+
+**Validação pendente (corp env):** confiamos que o endpoint de streaming devolve o mesmo JSON do
+structured output em deltas (o ask-mode streaming já funciona aí). Confirmar com um turno agêntico
+pesado que antes dava 502 — deve passar agora, e o wide event mostra `agent_action=tool_call`,
+`upstream_status=200`. Se o gateway ainda cortar mesmo em streaming (agent demora a emitir o 1º token),
+o evento mostra `RemoteProtocolError` de novo — aí o caminho é outro (ex.: keepalive/heartbeat).
 
 ## Testar (a suíte de CAP-6)
 
@@ -127,7 +134,7 @@ uv run pytest tests/unit/test_wide_event.py tests/unit/test_emit.py \
               tests/unit/test_redaction.py tests/unit/test_observability_config.py \
               tests/integration/test_wide_event_middleware.py \
               tests/e2e/test_wide_event_e2e.py -q
-uv run pytest        # suíte inteira (95 testes)
+uv run pytest        # suíte inteira (102 testes)
 ```
 
 O teste-âncora de CAP-6 é

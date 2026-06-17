@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 
 import httpx
@@ -22,6 +23,8 @@ from gambi.adapters.stackspot.sources import extract_sources
 from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
 from gambi.domain.models import AgentStreamEvent, StackSpotAgentOptions, UpstreamError, Usage
+from gambi.observability import enrich
+from gambi.observability.config import ObservabilityConfig
 
 logger = logging.getLogger("gambi.stackspot.stream")
 
@@ -38,10 +41,12 @@ class StackSpotAgentStreamer:
         client: httpx.AsyncClient,
         token_provider: TokenProviderPort,
         inference_base_url: str = _DEFAULT_INFERENCE_URL,
+        observability: ObservabilityConfig | None = None,
     ) -> None:
         self._client = client
         self._token_provider = token_provider
         self._base = inference_base_url.rstrip("/")
+        self._obs = observability or ObservabilityConfig()
 
     async def stream(
         self, agent_id: str, user_prompt: str, options: StackSpotAgentOptions
@@ -49,20 +54,32 @@ class StackSpotAgentStreamer:
         token = await self._token_provider.get_token()
         url = f"{self._base}/v1/agent/{agent_id}/chat"
         payload = build_payload(user_prompt=user_prompt, streaming=True, options=options)
+        # Wide event (CAP-6): mesma observabilidade do caminho não-stream.
+        enrich(upstream_url=url, prompt_chars=len(user_prompt))
+        if self._obs.include_bodies:
+            enrich(upstream_request_body=str(payload))
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
         }
+        start = time.perf_counter()
 
         try:
             async with self._client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code == 404:
-                    raise UpstreamError(f"agent não encontrado: {agent_id!r}", status_code=404)
+                enrich(upstream_status=resp.status_code)
                 if resp.status_code >= 400:
-                    await resp.aread()
+                    body = (await resp.aread()).decode(errors="replace")
+                    if self._obs.include_bodies:
+                        enrich(upstream_error_body=body)
+                    code = 404 if resp.status_code == 404 else resp.status_code
+                    msg = (
+                        f"agent não encontrado: {agent_id!r}"
+                        if resp.status_code == 404
+                        else f"StackSpot retornou {resp.status_code}"
+                    )
                     raise UpstreamError(
-                        f"StackSpot retornou {resp.status_code}", status_code=resp.status_code
+                        msg, status_code=code, body=body if self._obs.include_bodies else None
                     )
 
                 logger.info(
@@ -72,8 +89,13 @@ class StackSpotAgentStreamer:
                 )
                 async for event in self._consume(resp):
                     yield event
+            enrich(upstream_latency_ms=round((time.perf_counter() - start) * 1000, 3))
         except httpx.HTTPError as exc:
             # Cobre TLS/proxy corporativo, timeout, DNS — causas comuns no corp env.
+            enrich(
+                upstream_latency_ms=round((time.perf_counter() - start) * 1000, 3),
+                error_detail=f"{type(exc).__name__}: {exc}",
+            )
             logger.exception("falha de transporte ao contatar o StackSpot (stream)")
             raise UpstreamError(f"falha ao contatar o StackSpot (stream): {exc}") from exc
 

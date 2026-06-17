@@ -1,7 +1,13 @@
-"""StackSpotAgentInvoker — implementa AgentInvokerPort via httpx.
+"""StackSpotAgentInvoker — implementa AgentInvokerPort via httpx (NÃO-streaming).
 
 Endpoint: POST {inference_base_url}/v1/agent/{agentId}/chat
 Ver docs/stackspot/02-agents-api.md.
+
+NOTA: este é o invoker NÃO-streaming (`streaming:False`). Ele esbarra no teto de ~120s do
+gateway do StackSpot em respostas longas (turnos agênticos pesados → `RemoteProtocolError`).
+Por isso o composition root (`gambi/main.py`) usa o `BufferedAgentStreamInvoker` (streaming +
+acumulação) por padrão. Esta classe segue válida como adapter alternativo p/ chamadas curtas
+ou ambientes sem o teto, e mantém a mesma observabilidade (enrich do wide event).
 """
 
 from __future__ import annotations

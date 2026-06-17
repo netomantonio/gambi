@@ -4,10 +4,13 @@ Cobre cumulativo, incremental e o fallback de JSON único — sem depender do co
 """
 
 import httpx
+import pytest
 import respx
 
 from gambi.adapters.stackspot.stream import StackSpotAgentStreamer
-from gambi.domain.models import StackSpotAgentOptions
+from gambi.domain.models import StackSpotAgentOptions, UpstreamError
+from gambi.observability.config import ObservabilityConfig
+from gambi.observability.wide_event import WideEvent, bind_event, reset_event
 
 CHAT_URL = "https://genai-inference-app.stackspot.com/v1/agent/agent-1/chat"
 
@@ -86,3 +89,46 @@ async def test_sse_captures_sources_in_final_event():
     body = b'data: {"message": "oi", "stop_reason": "stop", "knowledge_source_id": ["ks-a"]}\n\n'
     _, finals = await _collect(body)
     assert finals[-1].sources == ("ks-a",)
+
+
+@respx.mock
+async def test_stream_enriches_wide_event_on_upstream_error():
+    # CAP-6 no caminho streaming: ≥400 enriquece upstream_status + body (sob flag).
+    respx.post(CHAT_URL).mock(return_value=httpx.Response(429, text="Credit Limit Reached"))
+    event = WideEvent(request_id="r1")
+    token = bind_event(event)
+    try:
+        async with httpx.AsyncClient() as client:
+            streamer = StackSpotAgentStreamer(
+                client=client,
+                token_provider=FixedToken(),
+                observability=ObservabilityConfig(log_bodies=True),
+            )
+            with pytest.raises(UpstreamError):
+                async for _ in streamer.stream("agent-1", "ola", DEFAULT_OPTS):
+                    pass
+    finally:
+        reset_event(token)
+    assert event.upstream_status == 429
+    assert event.upstream_error_body and "Credit Limit Reached" in event.upstream_error_body
+    assert event.prompt_chars == len("ola")
+
+
+@respx.mock
+async def test_stream_enriches_error_detail_on_transport_disconnect():
+    # O caso real do 502 agêntico: gateway derruba a conexão → RemoteProtocolError, sem status.
+    respx.post(CHAT_URL).mock(
+        side_effect=httpx.RemoteProtocolError("Server disconnected without sending a response.")
+    )
+    event = WideEvent(request_id="r1")
+    token = bind_event(event)
+    try:
+        async with httpx.AsyncClient() as client:
+            streamer = StackSpotAgentStreamer(client=client, token_provider=FixedToken())
+            with pytest.raises(UpstreamError):
+                async for _ in streamer.stream("agent-1", "x", DEFAULT_OPTS):
+                    pass
+    finally:
+        reset_event(token)
+    assert event.upstream_status is None
+    assert event.error_detail and "RemoteProtocolError" in event.error_detail
