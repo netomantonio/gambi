@@ -70,6 +70,17 @@ Guia completo em **[docs/vscode-setup.md](docs/vscode-setup.md)**. Resumo:
 >
 > ⚠️ **Sem autenticação no GAMBI ainda:** qualquer um que alcance a URL do GAMBI pode usá-lo (ele guarda as credenciais StackSpot). Para uso além do `localhost`, trate auth/rede como item de hardening (fora do v1 — ver SPEC).
 
+## Observabilidade (diagnosticar falhas)
+
+Toda request emite um **wide event** (uma linha estruturada) que diz, na hora, se uma falha (ex.: o
+502 do agent/plan mode) é **do GAMBI** ou **do StackSpot**. Barato por padrão (só metadados). Para
+investigar, ligue corpos + JSON:
+```bash
+GAMBI_LOG_FORMAT=json GAMBI_LOG_BODIES=1 uv run uvicorn gambi.main:app --env-file .env --reload
+```
+Olhe `outcome` + `upstream_status` na linha do request que falhou. Guia completo, flags e receita de
+diagnóstico em **[docs/observabilidade.md](docs/observabilidade.md)**. Segredos nunca são logados.
+
 ## Testes e lint
 ```bash
 uv run pytest                       # toda a suíte

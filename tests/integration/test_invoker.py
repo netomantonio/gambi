@@ -99,3 +99,49 @@ async def test_invoke_500_raises_upstream():
     async with httpx.AsyncClient() as client:
         with pytest.raises(UpstreamError):
             await _invoker(client).invoke("agent-1", "x", DEFAULT_OPTS)
+
+
+@respx.mock
+async def test_invoke_error_enriches_wide_event_status_and_latency():
+    # CAP-6: o client enriquece o evento com status/latência/prompt_chars (sempre, baratos).
+    from gambi.observability.wide_event import WideEvent, bind_event, reset_event
+
+    respx.post(CHAT_URL).mock(return_value=httpx.Response(429, text="Credit Limit Reached"))
+    event = WideEvent(request_id="r1")
+    token = bind_event(event)
+    try:
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(UpstreamError):
+                await _invoker(client).invoke("agent-1", "ola mundo", DEFAULT_OPTS)
+    finally:
+        reset_event(token)
+    assert event.upstream_status == 429
+    assert event.upstream_latency_ms is not None
+    assert event.prompt_chars == len("ola mundo")
+    # corpo NÃO capturado por default (privacidade): só sob flag.
+    assert event.upstream_error_body is None
+
+
+@respx.mock
+async def test_invoke_error_captures_body_under_bodies_flag():
+    from gambi.observability.config import ObservabilityConfig
+    from gambi.observability.wide_event import WideEvent, bind_event, reset_event
+
+    respx.post(CHAT_URL).mock(return_value=httpx.Response(429, text="Credit Limit Reached"))
+    event = WideEvent(request_id="r1")
+    token = bind_event(event)
+    try:
+        async with httpx.AsyncClient() as client:
+            invoker = StackSpotAgentInvoker(
+                client=client,
+                token_provider=FixedToken(),
+                observability=ObservabilityConfig(log_bodies=True),
+            )
+            with pytest.raises(UpstreamError) as exc:
+                await invoker.invoke("agent-1", "x", DEFAULT_OPTS)
+    finally:
+        reset_event(token)
+    assert event.upstream_status == 429
+    assert event.upstream_error_body and "Credit Limit Reached" in event.upstream_error_body
+    # a exceção também carrega o body p/ o handler, sem mudar o envelope ao cliente.
+    assert exc.value.body and "Credit Limit Reached" in exc.value.body

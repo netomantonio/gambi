@@ -40,7 +40,7 @@ Dois princípios que mudam o nível de exigência:
 
 > **Nuance importante sobre MCP (não confundir as superfícies):**
 > - Como **model provider**, o agent StackSpot (via GAMBI) só usa ferramentas se **emitir `tool_calls`** —
->   ou seja, ainda depende do structured output (a aposta da OQ-7). MCP **não** remove isso para esse caminho.
+>   ou seja, ainda depende do structured output (a aposta central do agent mode). MCP **não** remove isso para esse caminho.
 > - Como **MCP server**, o GAMBI fornece a **implementação** de ferramentas (ex.: "buscar no codebase via
 >   KS do StackSpot") que **qualquer modelo** no editor — inclusive um nativo (GPT/Claude) — chama nativamente.
 >   Esse caminho é **independente do structured output** e, portanto, mais robusto para *prover* poder.
@@ -61,6 +61,7 @@ Dois princípios que mudam o nível de exigência:
 | H | KS por branch/worktree | Grounding no que se está mexendo | 2 | Médio |
 | I | Indexar `docs/`, ADRs, SPEC/arquitetura | Agent respeita as convenções do time | 1-2 | Baixo |
 | J | GAMBI como MCP server (retrieval do codebase como tool nativa) | Poder a qualquer modelo, sem depender de structured output | 3 | Alto |
+| K | **Observabilidade / wide events** (1 evento estruturado por request; captura status+body do upstream; privacidade em camadas) | Saber se uma falha (ex.: 502 do agent mode) é do GAMBI ou do StackSpot, lendo uma linha | 0 | Médio | 📝 SPEC (CAP-6) |
 
 ## 6. Mecânica confirmada da API de KS (base para A/B/C)
 - Criar: `POST data-integration-api.stackspot.com/v1/knowledge-sources` (`slug`/`name`/`type` ∈ api|snippet|custom).
@@ -76,10 +77,11 @@ Dois princípios que mudam o nível de exigência:
 - **Provisionar KS exige escopo `ai_dev`/`ai_admin`** (Service Credential), mais que o chat.
 - **`standalone` KO (add manual sem arquivo):** citado no delete, mas endpoint de *adicionar* não documentado → PERGUNTA ABERTA (simplificaria o sync por-chunk).
 - **Acesso a filesystem (tier 2):** é a bifurcação central — exige GAMBI local/serviço, não proxy remoto.
-- **OQ-7 (structured output) ainda pendente** de validação real — base do agent mode.
+- **Structured output (a base do agent mode) ainda pendente** de validação real. *(Nota de namespace: as `OQ-N` são deste roadmap historicamente, mas o dono canônico do namespace é o `SPEC.md`. Lá, OQ-7 = streaming do wide event de CAP-6. Esta pendência de structured output **não** é uma OQ do SPEC — referir como "aposta do structured output", itens F/G, não como "OQ-7".)*
+- **Observabilidade barata por padrão (CAP-6):** o wide event nunca pode pesar/quebrar o núcleo; por padrão só metadados; corpos só sob flag, com redaction; `Authorization`/secret nunca logados (player financeiro).
 
 ## 8. Sequência recomendada
-1. **Carimbar o núcleo (tier 0):** validar chat + agent mode no editor real (streaming + structured output / OQ-7).
+1. **Carimbar o núcleo (tier 0):** validar chat + agent mode no editor real (streaming + structured output). **Instrumento: CAP-6 (wide events)** — o evento por request é o que diz se o agent mode falha por culpa do GAMBI ou do StackSpot.
 2. **Add-ons leves (tier 1):** B, C, F, I — baixo esforço, valor rápido, sem fs.
 3. **Spike de indexação (tier 2):** zip → upload → `SYNTACTIC` → anexar → pergunta grounded → medir `enrichment`.
 4. **MCP/CLI (tier 3):** quando o serviço local existir.

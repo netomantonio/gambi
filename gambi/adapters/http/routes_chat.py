@@ -23,6 +23,7 @@ from gambi.adapters.http.schemas_openai import (
 from gambi.adapters.http.sse import serialize_openai_sse
 from gambi.application.use_cases import CreateChatCompletion, CreateChatCompletionStream
 from gambi.domain.models import ChatResult, ChatStreamChunk, Conversation, Message, Role, ToolSpec
+from gambi.observability import enrich
 
 router = APIRouter()
 logger = logging.getLogger("gambi.http.chat")
@@ -144,6 +145,18 @@ async def create_chat_completion(body: ChatCompletionRequest, request: Request):
     # Detecção de modo (determinística): sem tools = ask; com tools = agent (cobre edit+agent).
     # Um modelo-alias roteia para agents StackSpot diferentes por modo.
     mode = "agent" if tools else "ask"
+
+    # Wide event (CAP-6): metadados da entrada. n_tool_results marca turno de follow-up
+    # (após o cliente executar uma tool) — a pista do 502 em agent mode.
+    enrich(
+        model=body.model,
+        mode=mode,
+        stream=bool(body.stream),
+        n_messages=len(body.messages),
+        n_tools=len(tools),
+        n_tool_results=sum(1 for m in body.messages if m.role == "tool"),
+        tool_names=[t.name for t in tools],
+    )
 
     # Agent estruturado sempre emite o JSON do nosso schema → bufferiza+parseia mesmo sem tools
     # (senão, em ask mode, vazaria JSON cru). entry pode ser None (modelo desconhecido) → cai no

@@ -19,3 +19,13 @@ def configure_logging(level: str | None = None) -> None:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         logger.addHandler(handler)
     logger.propagate = False  # evita log duplicado com o root do uvicorn
+
+    # Wide events (CAP-6): logger dedicado, linha crua (JSON ou key=value), sem o prefixo
+    # asctime/level — para a linha ser parseável por um agregador. Não propaga p/ `gambi`.
+    events = logging.getLogger("gambi.events")
+    events.setLevel("INFO")
+    if not events.handlers:
+        events_handler = logging.StreamHandler()
+        events_handler.setFormatter(logging.Formatter("%(message)s"))
+        events.addHandler(events_handler)
+    events.propagate = False

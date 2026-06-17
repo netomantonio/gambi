@@ -6,6 +6,8 @@ Ver docs/stackspot/02-agents-api.md.
 
 from __future__ import annotations
 
+import time
+
 import httpx
 
 from gambi.adapters.stackspot.request_payload import build_payload
@@ -14,6 +16,8 @@ from gambi.adapters.stackspot.sources import extract_sources
 from gambi.adapters.stackspot.tokens import usage_from_tokens
 from gambi.application.ports import TokenProviderPort
 from gambi.domain.models import AgentReply, StackSpotAgentOptions, UpstreamError
+from gambi.observability import enrich
+from gambi.observability.config import ObservabilityConfig
 
 _DEFAULT_INFERENCE_URL = "https://genai-inference-app.stackspot.com"
 
@@ -25,16 +29,27 @@ class StackSpotAgentInvoker:
         client: httpx.AsyncClient,
         token_provider: TokenProviderPort,
         inference_base_url: str = _DEFAULT_INFERENCE_URL,
+        observability: ObservabilityConfig | None = None,
     ) -> None:
         self._client = client
         self._token_provider = token_provider
         self._base = inference_base_url.rstrip("/")
+        self._obs = observability or ObservabilityConfig()
 
     async def invoke(
         self, agent_id: str, user_prompt: str, options: StackSpotAgentOptions
     ) -> AgentReply:
         token = await self._token_provider.get_token()
         url = f"{self._base}/v1/agent/{agent_id}/chat"
+        # Wide event (CAP-6): metadados baratos sempre; corpo do erro só sob flag.
+        enrich(upstream_url=url, prompt_chars=len(user_prompt))
+        if self._obs.include_bodies:
+            enrich(
+                upstream_request_body=str(
+                    build_payload(user_prompt=user_prompt, streaming=False, options=options)
+                )
+            )
+        start = time.perf_counter()
         try:
             response = await self._client.post(
                 url,
@@ -45,13 +60,26 @@ class StackSpotAgentInvoker:
                 json=build_payload(user_prompt=user_prompt, streaming=False, options=options),
             )
         except httpx.HTTPError as exc:
+            enrich(upstream_latency_ms=round((time.perf_counter() - start) * 1000, 3))
             raise UpstreamError(f"falha ao contatar o StackSpot: {exc}") from exc
 
-        if response.status_code == 404:
-            raise UpstreamError(f"agent não encontrado: {agent_id!r}", status_code=404)
+        enrich(
+            upstream_status=response.status_code,
+            upstream_latency_ms=round((time.perf_counter() - start) * 1000, 3),
+        )
         if response.status_code >= 400:
+            # Mata o buraco do 502 cego: capturamos o motivo real do StackSpot (sob flag).
+            body = response.text if self._obs.include_bodies else None
+            if body is not None:
+                enrich(upstream_error_body=body)
+            if response.status_code == 404:
+                raise UpstreamError(
+                    f"agent não encontrado: {agent_id!r}", status_code=404, body=body
+                )
             raise UpstreamError(
-                f"StackSpot retornou {response.status_code}", status_code=response.status_code
+                f"StackSpot retornou {response.status_code}",
+                status_code=response.status_code,
+                body=body,
             )
 
         parsed = StackSpotChatResponse.model_validate(response.json())

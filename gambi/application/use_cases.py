@@ -21,6 +21,7 @@ from gambi.domain.models import (
     ToolSpec,
 )
 from gambi.domain.structured import parse_structured_response
+from gambi.observability import enrich
 
 logger = logging.getLogger("gambi.use_cases")
 
@@ -66,6 +67,7 @@ class CreateChatCompletion:
         entry = self._catalog.resolve(model_id, mode)
         if entry is None:
             raise ModelNotFoundError(model_id)
+        enrich(agent_id=entry.agent_id)  # wide event (CAP-6)
 
         user_prompt = self._flattener.flatten(conversation, tools)
         reply = await self._invoker.invoke(entry.agent_id, user_prompt, entry.options)
@@ -84,6 +86,14 @@ class CreateChatCompletion:
                 )
                 parsed = parse_structured_response(reply.message)
             finish = FinishReason.TOOL_CALLS if parsed.tool_calls else FinishReason.STOP
+            # agent_action: o que o agent decidiu (diagnóstico da falha-irmã não-502).
+            if parsed.tool_calls:
+                action = "tool_call"
+            elif parsed.matched:
+                action = "final"
+            else:
+                action = "unmatched"
+            enrich(schema_repairs=repairs, agent_action=action, outcome="success")
             content = parsed.content
             if not parsed.tool_calls:  # resposta final → pode receber rodapé de fontes (F)
                 content = apply_sources_footer(
@@ -97,6 +107,7 @@ class CreateChatCompletion:
                 tool_calls=parsed.tool_calls,
             )
 
+        enrich(agent_action="final", schema_repairs=0, outcome="success")
         result = self._mapper.to_chat_result(reply, model_id)
         # F — citações: anexa rodapé "Fontes" quando o agent opta por return_ks_in_response.
         return replace(
@@ -134,6 +145,7 @@ class CreateChatCompletionStream:
         entry = self._catalog.resolve(model_id, mode)
         if entry is None:
             raise ModelNotFoundError(model_id)
+        enrich(agent_id=entry.agent_id)  # wide event (CAP-6)
         user_prompt = self._flattener.flatten(conversation, tools)
         return self._generate(entry.agent_id, model_id, user_prompt, entry.options)
 

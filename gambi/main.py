@@ -23,11 +23,13 @@ from gambi.application.use_cases import (
 )
 from gambi.config import Settings
 from gambi.logging_config import configure_logging
+from gambi.observability.config import ObservabilityConfig
 
 
 def build_app(settings: Settings | None = None):
     configure_logging()
     settings = settings or Settings.from_env()
+    observability = ObservabilityConfig.from_env()
 
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
 
@@ -37,7 +39,9 @@ def build_app(settings: Settings | None = None):
         client_id=settings.client_id,
         client_secret=settings.client_secret,
     )
-    invoker = StackSpotAgentInvoker(client=http_client, token_provider=token_provider)
+    invoker = StackSpotAgentInvoker(
+        client=http_client, token_provider=token_provider, observability=observability
+    )
     streamer = StackSpotAgentStreamer(client=http_client, token_provider=token_provider)
     catalog = ConfigAgentCatalog(settings.agents)
 
@@ -52,6 +56,7 @@ def build_app(settings: Settings | None = None):
         create_chat_completion=CreateChatCompletion(catalog, invoker),
         create_chat_completion_stream=CreateChatCompletionStream(catalog, streamer),
         lifespan=lifespan,
+        observability=observability,
     )
 
 
