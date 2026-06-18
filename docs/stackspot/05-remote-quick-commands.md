@@ -87,8 +87,9 @@ Fatos confirmados:
 
 A aba "Command Flow" do `agentrix-adk-create` mostra um **canvas de automação multi-step**: blocos de
 **Prompt**, **Web Request**, **Conditional** e **Execução Paralela**, ligados por caminhos de
-sucesso/erro, de um `start` até um bloco de resultado. O `agentrix-adk-create` em si **cria** agent +
-skill + prompt. Ou seja: Quick Commands são o **substrato de orquestração** (agents/steps atuando em
+sucesso/erro, de um `start` até um bloco de resultado. O `agentrix-adk-create` **gera e devolve na
+resposta** o artefato de agent + skill + prompt (é um **gerador** — não provisiona nada na conta, sem
+side-effect). Ou seja: Quick Commands são o **substrato de orquestração** (agents/steps atuando em
 conjunto, fluxos paralelos/condicionais) — exatamente a visão do roadmap §9 (enriquecimento de KS em
 tempo real, governança, validações, fluxos interconectados). Cada bloco do flow deve aparecer como um
 item em `steps[]` no callback (a confirmar no spike: como Parallel/Conditional se refletem ali).

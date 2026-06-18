@@ -28,10 +28,10 @@ REALM="${GAMBI_STACKSPOT_REALM:-}"
 CLIENT_ID="${GAMBI_STACKSPOT_CLIENT_ID:-}"
 CLIENT_SECRET="${GAMBI_STACKSPOT_CLIENT_SECRET:-}"
 QC_SLUG="${QC_SLUG:-agentrix-adk-create}"  # slug do Remote Quick Command (multi-step).
-# ⚠️ ATENÇÃO: 'agentrix-adk-create' CRIA artefatos reais (agent/skill/prompt) na sua conta a cada
-#    execução! Para um spike de captura, use um input descartável (e apague depois), OU aponte
-#    QC_SLUG p/ um Quick Command READ-ONLY se tiver. Ajuste QC_INPUT ao contrato do SEU QC.
-QC_INPUT="${QC_INPUT:-Crie um agente de teste descartavel chamado spike-throwaway que apenas responde ok.}"
+# 'agentrix-adk-create' é um GERADOR: monta agent/skill/prompt e devolve o artefato NA RESPOSTA
+# (sem provisionar nada na conta — zero side-effect). Ótimo alvo de spike (multi-step, saída grande).
+# Ajuste QC_INPUT ao contrato do SEU QC (aqui: descrição do agente a gerar).
+QC_INPUT="${QC_INPUT:-Gere um agente chamado spike-demo que responde perguntas sobre Python, com uma skill de exemplos de codigo e um prompt em portugues.}"
 # ===================================================================================
 
 IDM="https://idm.stackspot.com"
