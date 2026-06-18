@@ -5,9 +5,10 @@
 #
 # OBJETIVO: responder as PERGUNTAS ABERTAS de docs/stackspot/05-remote-quick-commands.md:
 #   1) Durante RUNNING, os steps[].step_result.answer aparecem PARCIAIS/acumulados? (o coração)
-#   2) Qual host de callback responde na conta? (genai-code-buddy-api vs data-integration-api)
+#   2) [CONFIRMADO pelo portal] host = genai-code-buddy-api (create + callback). Spike só re-valida.
 #   3) Quais valores de status aparecem? (CREATED/RUNNING/COMPLETED/FAILED?)
 #   4) Cadência de polling viável vs rate-limit.
+#   5) Como os steps de um QC ORQUESTRADO (Prompt/WebRequest/Conditional/Parallel) aparecem no callback.
 #
 # COMO USAR:
 #   1) Exporte (ou preencha abaixo): REALM, CLIENT_ID, CLIENT_SECRET, QC_SLUG, QC_INPUT.
@@ -26,14 +27,20 @@ set -uo pipefail
 REALM="${GAMBI_STACKSPOT_REALM:-}"
 CLIENT_ID="${GAMBI_STACKSPOT_CLIENT_ID:-}"
 CLIENT_SECRET="${GAMBI_STACKSPOT_CLIENT_SECRET:-}"
-QC_SLUG="${QC_SLUG:-}"                      # slug do Remote Quick Command (multi-step de preferência)
-QC_INPUT="${QC_INPUT:-Explique em 3 parágrafos detalhados como funciona o protocolo TCP/IP.}"
+QC_SLUG="${QC_SLUG:-agentrix-adk-create}"  # slug do Remote Quick Command (multi-step).
+# ⚠️ ATENÇÃO: 'agentrix-adk-create' CRIA artefatos reais (agent/skill/prompt) na sua conta a cada
+#    execução! Para um spike de captura, use um input descartável (e apague depois), OU aponte
+#    QC_SLUG p/ um Quick Command READ-ONLY se tiver. Ajuste QC_INPUT ao contrato do SEU QC.
+QC_INPUT="${QC_INPUT:-Crie um agente de teste descartavel chamado spike-throwaway que apenas responde ok.}"
 # ===================================================================================
 
 IDM="https://idm.stackspot.com"
-CREATE_HOST="${CREATE_HOST:-https://genai-data-integration-api.stackspot.com}"
-# Hosts candidatos p/ o callback (a doc diverge). Sobrescreva com CALLBACK_HOST p/ pular o autodetect.
-CALLBACK_CANDIDATES=("https://genai-code-buddy-api.stackspot.com" "https://data-integration-api.stackspot.com")
+# Host CONFIRMADO pelo portal (aba "Como usar" do QC agentrix-adk-create): create + callback no MESMO
+# host genai-code-buddy-api. (A doc oficial genérica cita genai-data-integration-api p/ create — o
+# portal por-QC é a fonte autoritativa da conta.)
+CREATE_HOST="${CREATE_HOST:-https://genai-code-buddy-api.stackspot.com}"
+# Callback: genai-code-buddy-api confirmado; demais ficam como fallback do autodetect.
+CALLBACK_CANDIDATES=("https://genai-code-buddy-api.stackspot.com" "https://genai-data-integration-api.stackspot.com" "https://data-integration-api.stackspot.com")
 POLL_INTERVAL="${POLL_INTERVAL:-3}"        # segundos entre polls (cuidado: 20 req/min no Service Credential)
 MAX_POLLS="${MAX_POLLS:-40}"               # ~2 min com intervalo 3s
 

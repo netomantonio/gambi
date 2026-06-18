@@ -9,10 +9,15 @@ Fontes oficiais:
 - [Create and Execute Remote Quick Commands](https://ai.stackspot.com/docs/quick-commands/create-remote-qc)
 - [Remote Quick Command Example](https://ai.stackspot.com/docs/quick-commands/examples-qc/example-remote-qc) (JSON do callback verbatim)
 
+> **Host CONFIRMADO (portal, aba "Como usar" do QC `agentrix-adk-create`, 2026-06-18):** create
+> **e** callback ficam no MESMO host **`genai-code-buddy-api.stackspot.com`**. A doc oficial genérica
+> cita `genai-data-integration-api.stackspot.com` p/ create — diverge; o portal por-QC é a fonte
+> autoritativa da conta. ⇒ resolve a PERGUNTA ABERTA #2 (host).
+
 ## 1. Criar execução (CONFIRMADO)
 
 ```
-POST https://genai-data-integration-api.stackspot.com/v1/quick-commands/create-execution/{quick_command_slug}
+POST https://genai-code-buddy-api.stackspot.com/v1/quick-commands/create-execution/{quick_command_slug}
 Authorization: Bearer <access_token>
 Content-Type: application/json
 ```
@@ -28,7 +33,7 @@ Resposta: inclui um **`execution_id`**. *(PERGUNTA ABERTA: a resposta é o id cr
 ## 2. Polling do callback (shape CONFIRMADO pela doc de exemplo)
 
 ```
-GET https://<callback-host>/v1/quick-commands/callback/{execution_id}
+GET https://genai-code-buddy-api.stackspot.com/v1/quick-commands/callback/{execution_id}
 Authorization: Bearer <access_token>
 ```
 
@@ -67,7 +72,7 @@ Fatos confirmados:
 ## ⚠️ PERGUNTAS ABERTAS (o que o spike precisa cravar)
 
 1. **Parcial durante RUNNING (o coração):** durante a execução (antes de COMPLETED), os `steps[].step_result.answer` aparecem **parciais/acumulados**? Um step ainda não terminado aparece com `step_result` null/parcial? *(Observação do usuário: SIM, snapshot por step acumulado — confirmar com captura ao vivo.)*
-2. **Host do callback (ambiguidade real):** a página de criação cita `data-integration-api.stackspot.com`; o exemplo usa `genai-code-buddy-api.stackspot.com`. Qual responde na conta Enterprise? *(O spike tenta ambos.)*
+2. ~~**Host do callback**~~ **✅ RESOLVIDA (portal):** create + callback em `genai-code-buddy-api.stackspot.com`.
 3. **Enum de status completo:** CREATED / RUNNING / COMPLETED / FAILED / outros?
 4. **Intervalo de polling recomendado:** não documentado (busca sugere ~5s).
 5. **QC emite structured output → `tool_calls`?** o `answer` de um step pode carregar nosso JSON `{"action":"tool_call",...}` (depende do prompt do QC). Decide se QC-async *substitui* o agent mode ou só *complementa*.
@@ -77,6 +82,16 @@ Fatos confirmados:
 - **Retry automático:** até 3 tentativas adicionais (4 no total) por passo de LLM. Não configurável.
 - **Service Credential:** 20 requests/min, 6.000/dia. **Personal Access Token:** 100 requests / 24h (`HTTP 429`).
 - ⚠️ **Polling divide essa cota.** A cada 3-5s, um job de 2 min = 24-40 GETs → perto do teto de 20/min do Service Credential. Exige cadência adaptativa/backoff. *(PERGUNTA ABERTA: se os limites valem para a Agents API síncrona — ver [01](01-autenticacao.md).)*
+
+## Command Flow — QC é orquestração visual (confirmado no portal, 2026-06-18)
+
+A aba "Command Flow" do `agentrix-adk-create` mostra um **canvas de automação multi-step**: blocos de
+**Prompt**, **Web Request**, **Conditional** e **Execução Paralela**, ligados por caminhos de
+sucesso/erro, de um `start` até um bloco de resultado. O `agentrix-adk-create` em si **cria** agent +
+skill + prompt. Ou seja: Quick Commands são o **substrato de orquestração** (agents/steps atuando em
+conjunto, fluxos paralelos/condicionais) — exatamente a visão do roadmap §9 (enriquecimento de KS em
+tempo real, governança, validações, fluxos interconectados). Cada bloco do flow deve aparecer como um
+item em `steps[]` no callback (a confirmar no spike: como Parallel/Conditional se refletem ali).
 
 ## Implicações para o GAMBI
 
